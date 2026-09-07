@@ -674,6 +674,26 @@ fn delete_ai_key(provider: String) -> Result<(), String> {
     Ok(())
 }
 
+fn send_ai_request(
+    request: reqwest::blocking::RequestBuilder,
+    error_prefix: &str,
+) -> Result<reqwest::blocking::Response, String> {
+    let retry = request.try_clone();
+    match request.send() {
+        Ok(response) => Ok(response),
+        Err(error) if error.is_connect() || error.is_timeout() => {
+            let Some(retry) = retry else {
+                return Err(format!("{error_prefix}：{error}"));
+            };
+            thread::sleep(Duration::from_millis(350));
+            retry
+                .send()
+                .map_err(|retry_error| format!("{error_prefix}：{retry_error}"))
+        }
+        Err(error) => Err(format!("{error_prefix}：{error}")),
+    }
+}
+
 #[tauri::command]
 fn test_ai_connection(
     provider: String,
@@ -707,9 +727,7 @@ fn test_ai_connection(
             .map_err(|_| "请先保存该服务商的 API Key".to_string())?;
         request = request.bearer_auth(key);
     }
-    let response = request
-        .send()
-        .map_err(|error| format!("连接失败：{error}"))?;
+    let response = send_ai_request(request, "连接失败")?;
     let status = response.status();
     if !status.is_success() {
         let detail = response.text().unwrap_or_default();
@@ -754,9 +772,7 @@ fn recommend_music_with_ai(
             .map_err(|_| "请先在设置中保存该服务商的 API Key".to_string())?;
         request = request.bearer_auth(key);
     }
-    let response = request
-        .send()
-        .map_err(|error| format!("AI 推荐失败：{error}"))?;
+    let response = send_ai_request(request, "AI 推荐失败")?;
     if !response.status().is_success() {
         return Err(format!("AI 接口返回 {}", response.status()));
     }

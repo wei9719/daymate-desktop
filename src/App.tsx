@@ -1835,7 +1835,7 @@ function SettingsPage() {
         <div className="brand-mark">日</div>
         <div>
           <strong>DayMate 日伴</strong>
-          <span>版本 0.4.0 · 本地优先桌面陪伴应用</span>
+          <span>版本 0.5.0 · 本地优先桌面陪伴应用</span>
         </div>
         <div className="about-links">
           <a

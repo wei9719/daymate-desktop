@@ -8,9 +8,9 @@
 
 DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是企业监控软件，也不是要求用户维护复杂清单的项目管理工具。它只想帮用户看见昨天、选出今天最值得做的一件事，并更轻松地开始。
 
-当前版本：`0.4.0`（MVP 开发版）
+当前版本：`0.5.0`（MVP 开发版）
 
-[⬇️ 直接下载 DayMate 0.4.0 Windows 安装包](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.4.0/DayMate_0.4.0_x64-setup.exe) · [查看最新版本](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md)
+[⬇️ 直接下载 DayMate 0.5.0 Windows 安装包](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.5.0/DayMate_0.5.0_x64-setup.exe) · [查看最新版本](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md)
 
 ## 已实现
 
@@ -26,7 +26,7 @@ DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是
 - 应用级时间分析：真实程序图标、全部应用停留时长与占比、横向排行图和环形分布图
 - 四首 CC0 音乐随应用离线提供，网络曲库不可用时也能播放
 - 每日舒适背景：七套柔和渐变按日期稳定轮换，也可随时手动换景
-- 多 AI 服务商设置与连接测试；API Key 安全保存到 Windows 凭据管理器
+- 多 AI 服务商设置与连接测试，包含硅基流动通义千问预设；API Key 安全保存到 Windows 凭据管理器
 - 隐私控制：活动记录、窗口标题、空闲检测开关和二次确认删除
 - Windows 活动采集后端：前台进程、可选窗口标题、5 分钟空闲排除、60 秒批量落库
 - SQLite 数据库：WAL、迁移记录、会话索引、今日统计查询

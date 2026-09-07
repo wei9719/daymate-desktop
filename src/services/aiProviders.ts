@@ -36,6 +36,13 @@ export const aiProviders: AiProvider[] = [
     needsKey: true,
   },
   {
+    id: "siliconflow",
+    name: "硅基流动 SiliconFlow",
+    baseUrl: "https://api.siliconflow.cn/v1",
+    model: "Qwen/Qwen2.5-7B-Instruct",
+    needsKey: true,
+  },
+  {
     id: "zhipu",
     name: "智谱 GLM",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",

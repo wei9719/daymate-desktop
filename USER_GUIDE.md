@@ -4,10 +4,10 @@
 
 ## 立即下载
 
-[⬇️ **直接下载 DayMate 0.4.0 Windows 安装包（64 位）**](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.4.0/DayMate_0.4.0_x64-setup.exe)
+[⬇️ **直接下载 DayMate 0.5.0 Windows 安装包（64 位）**](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.5.0/DayMate_0.5.0_x64-setup.exe)
 
 - [查看最新版本与更新说明](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest)
-- [下载 SHA256 校验文件](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.4.0/SHA256SUMS.txt)
+- [下载 SHA256 校验文件](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.5.0/SHA256SUMS.txt)
 - 当前支持：Windows 10 / Windows 11，64 位
 - GitHub 账号：不需要
 - AI API Key：不需要；只有 AI 增强功能需要自行配置
@@ -16,7 +16,7 @@
 
 ## 1. 安装 DayMate
 
-1. 点击上方“直接下载”，保存 `DayMate_0.4.0_x64-setup.exe`。
+1. 点击上方“直接下载”，保存 `DayMate_0.5.0_x64-setup.exe`。
 2. 双击安装包，按照安装向导完成安装。
 3. 从桌面快捷方式或开始菜单打开“DayMate 日伴”。
 4. 第一次启动时完成昵称、身份、陪伴语气、隐私权限和首个任务设置。
@@ -28,7 +28,7 @@ Windows 可能因为应用仍处于早期发布阶段而显示 SmartScreen 提�
 在安装包所在文件夹打开 PowerShell，执行：
 
 ```powershell
-Get-FileHash .\DayMate_0.4.0_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\DayMate_0.5.0_x64-setup.exe -Algorithm SHA256
 ```
 
 将输出结果与 `SHA256SUMS.txt` 中对应文件的值比较；完全一致再安装。
@@ -159,7 +159,7 @@ DayMate 使用 Windows 的“最近一次键鼠输入时间”判断电脑是否
 
 1. 打开“设置”中的“AI 服务”。
 2. 开启“AI 增强”。
-3. 选择服务商，例如商汤日日新、OpenAI、DeepSeek、通义千问、智谱、Moonshot、OpenRouter、Ollama 或自定义 OpenAI 兼容接口。
+3. 选择服务商，例如商汤日日新、OpenAI、DeepSeek、通义千问、硅基流动、智谱、Moonshot、OpenRouter、Ollama 或自定义 OpenAI 兼容接口。
 4. 填写服务商提供的 Base URL、模型名称和 API Key。
 5. 点击“测试连接”，成功后保存。
 

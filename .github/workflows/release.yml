@@ -32,14 +32,14 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "DayMate ${{ github.ref_name }}"
           releaseBody: |
-            ## DayMate 0.4.0
+            ## DayMate 0.5.0
 
-            - 时间回顾新增全部应用明细，显示真实程序图标、停留时长、占比和进度条。
-            - 新增应用时长横向排行图和环形占比分布图。
-            - 新增停留最久应用的中性摘要，不对用户行为打分。
-            - 程序图标从本机可执行文件提取并在内存中缓存，不联网获取图标。
+            - AI 服务新增硅基流动 SiliconFlow 一键预设。
+            - 默认调用经过实测的通义千问 Qwen/Qwen2.5-7B-Instruct。
+            - AI 请求遇到连接失败或超时时自动重试一次，减少临时网络波动造成的失败。
+            - API Key 仍只保存在 Windows 凭据管理器，不写入仓库、数据库或日志。
 
-            数据库迁移：升级到 v4，为活动会话新增可执行文件路径字段；旧数据保持不变，应用再次使用后自动补全图标。
+            数据库迁移：无。v0.5.0 继续使用 v4 数据库，原有活动数据与设置保持不变。
 
             下载 `setup.exe` 后直接安装，普通用户不需要 Node.js 或 Rust。
           releaseDraft: false
