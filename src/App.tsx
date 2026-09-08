@@ -50,6 +50,11 @@ import {
   type MusicCategory,
   type SmartTrack,
 } from "./services/music";
+import {
+  createSafeLocalAudioBlob,
+  LocalAudioImportError,
+  localAudioAccept,
+} from "./services/localAudio";
 import { getDailyTheme } from "./services/dailyTheme";
 import { aiProviders, findAiProvider } from "./services/aiProviders";
 import {
@@ -1319,6 +1324,9 @@ export function ContentPage() {
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
   const [localTrack, setLocalTrack] = useState<{ name: string; url: string }>();
+  const [localAudioError, setLocalAudioError] = useState("");
+  const [localAudioBusy, setLocalAudioBusy] = useState(false);
+  const localAudioRequestVersion = useRef(0);
   const [aiMusicStatus, setAiMusicStatus] = useState("");
   const [aiMusicBusy, setAiMusicBusy] = useState(false);
   const [pendingAiRequest, setPendingAiRequest] = useState<AiMusicRequest>();
@@ -1342,6 +1350,34 @@ export function ContentPage() {
     },
     [localTrack],
   );
+  useEffect(
+    () => () => {
+      localAudioRequestVersion.current += 1;
+    },
+    [],
+  );
+  const importLocalAudio = async (file: File) => {
+    const requestVersion = ++localAudioRequestVersion.current;
+    setLocalAudioBusy(true);
+    setLocalAudioError("");
+    try {
+      const audio = await createSafeLocalAudioBlob(file);
+      if (requestVersion !== localAudioRequestVersion.current) return;
+      const url = URL.createObjectURL(audio);
+      setLocalTrack({ name: file.name, url });
+    } catch (error) {
+      if (requestVersion === localAudioRequestVersion.current) {
+        setLocalAudioError(
+          error instanceof LocalAudioImportError
+            ? error.message
+            : "暂时无法导入这首歌曲，请重新选择本地音频文件。",
+        );
+      }
+    } finally {
+      if (requestVersion === localAudioRequestVersion.current)
+        setLocalAudioBusy(false);
+    }
+  };
   const chooseCategory = (category: MusicCategory) => {
     updatePreferences({ musicCategory: category });
     setSearch("");
@@ -1556,26 +1592,37 @@ export function ContentPage() {
           />
           <div className="local-music">
             <label className="button ghost">
-              导入本地歌曲
+              {localAudioBusy ? "正在检查歌曲…" : "导入本地歌曲"}
               <input
                 type="file"
-                accept="audio/*"
+                aria-label="导入本地歌曲"
+                accept={localAudioAccept}
+                disabled={localAudioBusy}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
+                  event.currentTarget.value = "";
                   if (!file) return;
-                  setLocalTrack((current) => {
-                    if (current) URL.revokeObjectURL(current.url);
-                    return { name: file.name, url: URL.createObjectURL(file) };
-                  });
+                  void importLocalAudio(file);
                 }}
               />
             </label>
-            <span>商业版权歌曲可从你合法拥有的本地文件播放</span>
+            <span>
+              导入你合法拥有的 MP3、WAV、OGG、Opus 或 FLAC，单首不超过 100 MiB
+            </span>
           </div>
+          {localAudioError && <p role="alert">{localAudioError}</p>}
           {localTrack && (
             <div className="local-player">
               <strong>{localTrack.name}</strong>
-              <audio src={localTrack.url} controls />
+              <audio
+                src={localTrack.url}
+                controls
+                onError={() =>
+                  setLocalAudioError(
+                    "这首歌曲无法解码播放，请检查文件是否完整或换一种音频格式。",
+                  )
+                }
+              />
             </div>
           )}
         </article>

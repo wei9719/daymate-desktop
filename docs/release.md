@@ -28,6 +28,7 @@ npm run typecheck
 npm run test
 node --test scripts/test-release.mjs
 node --test scripts/test-audit-rust.mjs
+node --test scripts/test-check-sarif.mjs
 npm audit --include=dev --audit-level=high --registry=https://registry.npmjs.org
 cargo install cargo-audit --version 0.22.2 --locked
 node scripts/audit-rust.mjs
@@ -45,7 +46,7 @@ git push -u origin codex/release-v0.6.1
 
 ## 创建 Tag
 
-发布准备分支合并后，等待 `main` 对应提交的 CI 全部通过，然后打 Tag。Tag 必须指向已合并到 `main` 的提交；不要移动或覆盖已发布的 Tag。
+发布准备分支合并后，等待 `main` 对应提交的 CI 与 CodeQL 全部通过，然后打 Tag。Tag 必须指向已合并到 `main` 的提交；不要移动或覆盖已发布的 Tag。
 
 ```powershell
 git switch main
@@ -60,6 +61,8 @@ git push origin v0.6.1
 `.github/workflows/release.yml` 复用 `ci.yml` 的完整质量检查，保证 PR、main 和 Tag 发布执行相同门禁：格式、Lint、类型检查、前端测试、发布脚本测试、前端构建、版本一致性、Rust fmt、Clippy 与 Rust 测试。Rust 依赖使用锁文件。
 
 质量检查分别在 Windows Server 2022/2025 执行，同时审计 npm 全依赖和完整 Cargo.lock。RustSec 报告中的全部漏洞阻断发布；unsound 警示按 Cargo 解析出的 Windows 实际依赖阻断，非 Windows 依赖与停维护警示不隐藏，详见[安全说明](security-compatibility.md)。审计命令失败、元数据缺失或存在忽略配置时门禁失败。每周另运行同一审计工作流。
+
+Release 另复用 CodeQL 工作流，构建同时依赖质量和安全检查。`scripts/check-sarif.mjs` 检查本次实际生成的报告：安全分值至少 7 或 error 级安全结果阻断，报告不完整、引用规则无效也失败。Tag 仍完整执行扫描和本地门禁，只不上传告警/查询数据库；main/PR 上传供 GitHub 告警管理。不要用扫描任务本身的绿色状态代替结果检查。
 
 仓库通过 `.gitattributes` 与 `.prettierrc.json` 统一使用 LF 换行，即使 Windows Git 开启 `core.autocrlf=true`，新检出的源文件也保持 LF。已有工作目录更新规则后可运行 `npx prettier --write .` 统一格式，再执行格式检查；不要通过关闭门禁解决换行差异。
 

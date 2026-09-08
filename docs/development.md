@@ -35,6 +35,7 @@ npm run build
 npm run version:check
 node --test scripts/test-release.mjs
 node --test scripts/test-audit-rust.mjs
+node --test scripts/test-check-sarif.mjs
 npm audit --include=dev --audit-level=high --registry=https://registry.npmjs.org
 cargo install cargo-audit --version 0.22.2 --locked
 node scripts/audit-rust.mjs

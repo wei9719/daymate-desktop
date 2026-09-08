@@ -37,7 +37,7 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test
-      - run: node --test scripts/test-release.mjs scripts/test-audit-rust.mjs
+      - run: node --test scripts/test-release.mjs scripts/test-audit-rust.mjs scripts/test-check-sarif.mjs
       - run: npm run build
       - run: npm run version:check
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
