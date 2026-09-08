@@ -130,7 +130,7 @@ test("今日与设置：服务商配置恢复，浏览器不调用模型接口",
   await expect(
     page.getByRole("heading", { name: "AI 服务", exact: true }),
   ).toBeVisible();
-  const provider = page.getByLabel("服务商", { exact: true });
+  const provider = page.getByRole("combobox", { name: "服务商", exact: true });
   const baseUrl = page.getByLabel("Base URL", { exact: true });
   const model = page.getByLabel("模型名称", { exact: true });
   const getModels = page.getByRole("button", { name: "获取模型", exact: true });
@@ -198,11 +198,16 @@ test("内容：场景与鼓励本地回退，音乐操作不改变每日好句",
   const music = page.locator(".music-browser");
   const musicTitle = music.locator(".music-copy strong");
   await expect(musicTitle).toContainText("云端模拟曲目");
-  await page.getByLabel("当前场景", { exact: true }).selectOption("focus");
-  await page.getByLabel("此刻心情", { exact: true }).selectOption("tired");
+  await page
+    .getByRole("combobox", { name: "当前场景", exact: true })
+    .selectOption("focus");
+  await page
+    .getByRole("combobox", { name: "此刻心情", exact: true })
+    .selectOption("tired");
 
   await music.getByRole("button", { name: "国风民乐", exact: true }).click();
   await expect(musicTitle).toContainText("云端模拟曲目");
+  await expect(music.locator(".music-copy span")).toContainText("国风民乐");
   await expect(quote).toHaveText(quoteText);
   await music.getByRole("button", { name: "单曲循环", exact: true }).click();
   await expect(
