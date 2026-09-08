@@ -1,7 +1,9 @@
 #requires -Version 7.0
 param(
   [Parameter(Mandatory = $true)]
-  [string]$InstallerPath
+  [string]$InstallerPath,
+  [ValidateSet('fresh', 'legacy-v4')]
+  [string]$DataScenario = 'fresh'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,11 +26,15 @@ if (Get-Process -Name 'daymate-desktop' -ErrorAction SilentlyContinue) {
   throw 'An existing DayMate process would interfere with the isolated test; it will not be stopped.'
 }
 
-$installRoot = Join-Path $smokeRoot 'app'
-$dataRoot = Join-Path $smokeRoot 'data'
+$installRoot = Join-Path $smokeRoot '日伴 安装'
+$dataRoot = Join-Path $smokeRoot '用户 数据'
 $database = Join-Path $dataRoot 'daymate.sqlite3'
 $executable = Join-Path $installRoot 'daymate-desktop.exe'
 New-Item -ItemType Directory -Path $smokeRoot, $dataRoot | Out-Null
+if ($DataScenario -eq 'legacy-v4') {
+  python (Join-Path $PSScriptRoot 'smoke-fixture.py') create $database
+  if ($LASTEXITCODE -ne 0) { throw 'Could not create the synthetic v4 database fixture.' }
+}
 $ownedProcesses = [System.Collections.Generic.List[System.Diagnostics.Process]]::new()
 $previousDataDir = $env:DAYMATE_DATA_DIR
 $previousWebViewDataDir = $env:WEBVIEW2_USER_DATA_FOLDER
@@ -102,6 +108,10 @@ try {
     Assert-TestProcessAlive -Process $first
   }
   Write-Output 'PASS: a second launch exited successfully while the original process stayed alive.'
+  if ($DataScenario -eq 'legacy-v4') {
+    python (Join-Path $PSScriptRoot 'smoke-fixture.py') verify $database
+    if ($LASTEXITCODE -ne 0) { throw 'The synthetic v4 data was not preserved during migration.' }
+  }
   Write-Output 'Smoke test passed. UI rendering, notifications, autostart and reboot behavior are outside this test.'
 } finally {
   # Keep process handles rather than matching names, so unrelated runner processes cannot be stopped.

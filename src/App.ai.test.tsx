@@ -21,7 +21,11 @@ vi.mock("./native", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./native")>()),
   getTodayStats: vi.fn(async () => ({ activeSeconds: 780 })),
   setNativeTracking: vi.fn(async () => undefined),
-  hasAiKey: vi.fn(async () => true),
+  getAiKeyStatus: vi.fn(async () => ({
+    saved: true,
+    usable: true,
+    message: "",
+  })),
   saveAiKey: vi.fn(async () => undefined),
   deleteAiKey: vi.fn(async () => undefined),
   getAiUsage: vi.fn(async () => ({ date: "2026-09-08", calls: 0 })),
@@ -84,7 +88,11 @@ const initialPreferences = { ...useAppStore.getState().preferences };
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(isTauri).mockReturnValue(true);
-  vi.mocked(native.hasAiKey).mockResolvedValue(true);
+  vi.mocked(native.getAiKeyStatus).mockResolvedValue({
+    saved: true,
+    usable: true,
+    message: "",
+  });
   vi.mocked(native.saveAiKey).mockResolvedValue(undefined);
   vi.mocked(native.recommendMusicWithAi).mockResolvedValue({
     category: "focus",
@@ -204,13 +212,13 @@ describe("AI 设置与系统设置", () => {
   });
 
   it("切换服务商后不接受上一个服务的迟到密钥结果", async () => {
-    let resolveFirst: ((saved: boolean) => void) | undefined;
-    vi.mocked(native.hasAiKey).mockImplementation((provider) =>
+    let resolveFirst: ((status: native.AiKeyStatus) => void) | undefined;
+    vi.mocked(native.getAiKeyStatus).mockImplementation((provider) =>
       provider === initialPreferences.aiProvider
         ? new Promise((resolve) => {
             resolveFirst = resolve;
           })
-        : Promise.resolve(false),
+        : Promise.resolve({ saved: false, usable: false, message: "" }),
     );
     render(<SettingsPage />);
     fireEvent.change(screen.getByRole("combobox", { name: "服务商" }), {
@@ -218,7 +226,7 @@ describe("AI 设置与系统设置", () => {
     });
     await screen.findByText("尚未配置密钥");
     await act(async () => {
-      resolveFirst?.(true);
+      resolveFirst?.({ saved: true, usable: true, message: "" });
     });
     expect(screen.getByText("尚未配置密钥")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "测试连接" })).toBeDisabled();
@@ -235,9 +243,11 @@ describe("AI 设置与系统设置", () => {
           finishSave = resolve;
         }),
     );
-    vi.mocked(native.hasAiKey).mockImplementation(
-      async (provider) => provider === initialPreferences.aiProvider,
-    );
+    vi.mocked(native.getAiKeyStatus).mockImplementation(async (provider) => ({
+      saved: provider === initialPreferences.aiProvider,
+      usable: provider === initialPreferences.aiProvider,
+      message: "",
+    }));
     render(<SettingsPage />);
     await screen.findByText("密钥已配置");
     fireEvent.change(
@@ -254,7 +264,9 @@ describe("AI 设置与系统设置", () => {
     });
     expect(screen.getByText("尚未配置密钥")).toBeInTheDocument();
     expect(
-      screen.queryByText("API Key 已安全保存到 Windows 凭据管理器。"),
+      screen.queryByText(
+        "API Key 已安全保存到 Windows 凭据管理器，并绑定当前接口地址。",
+      ),
     ).not.toBeInTheDocument();
   });
 
@@ -266,6 +278,71 @@ describe("AI 设置与系统设置", () => {
       initialPreferences.aiProvider,
     );
     expect(screen.getByRole("button", { name: "测试连接" })).toBeDisabled();
+  });
+
+  it("改变接口后禁用旧密钥，保留删除入口并在重新保存时绑定当前地址", async () => {
+    const changedUrl = "https://gateway.example.test/v1";
+    vi.mocked(native.getAiKeyStatus).mockImplementation(
+      async (_provider, baseUrl) => ({
+        saved: true,
+        usable: baseUrl === initialPreferences.aiBaseUrl,
+        message:
+          baseUrl === initialPreferences.aiBaseUrl
+            ? ""
+            : "接口地址与保存密钥时不一致，已阻止发送",
+      }),
+    );
+    render(<SettingsPage />);
+    await screen.findByText("密钥已配置");
+    fireEvent.change(screen.getByRole("textbox", { name: "Base URL" }), {
+      target: { value: changedUrl },
+    });
+    expect(screen.getByRole("button", { name: "测试连接" })).toBeDisabled();
+    await screen.findByText("密钥已保存，但当前接口未获授权");
+    expect(screen.getByRole("button", { name: "删除密钥" })).toBeEnabled();
+    expect(screen.getByText(/保存密钥即确认仅用于当前接口/)).toHaveTextContent(
+      changedUrl,
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText("已安全保存；输入新值可覆盖"),
+      {
+        target: { value: "test-only-key" },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "保存密钥" }));
+    await waitFor(() =>
+      expect(native.saveAiKey).toHaveBeenCalledWith(
+        initialPreferences.aiProvider,
+        changedUrl,
+        "test-only-key",
+      ),
+    );
+    await screen.findByText(
+      "API Key 已安全保存到 Windows 凭据管理器，并绑定当前接口地址。",
+    );
+    expect(screen.getByRole("button", { name: "测试连接" })).toBeEnabled();
+  });
+
+  it("同一服务商切换接口时不会接受旧地址的迟到密钥状态", async () => {
+    let oldResult: ((status: native.AiKeyStatus) => void) | undefined;
+    vi.mocked(native.getAiKeyStatus).mockImplementation(
+      async (_provider, baseUrl) =>
+        baseUrl === initialPreferences.aiBaseUrl
+          ? new Promise((resolve) => {
+              oldResult = resolve;
+            })
+          : { saved: true, usable: false, message: "请重新保存密钥" },
+    );
+    render(<SettingsPage />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Base URL" }), {
+      target: { value: "https://other.example.test/v1" },
+    });
+    await screen.findByText("密钥已保存，但当前接口未获授权");
+    await act(async () => {
+      oldResult?.({ saved: true, usable: true, message: "" });
+    });
+    expect(screen.getByRole("button", { name: "测试连接" })).toBeDisabled();
+    expect(screen.getByText("请重新保存密钥")).toBeInTheDocument();
   });
 
   it("自启设置失败不会保存假状态，通知只有主动测试时发送", async () => {

@@ -1,7 +1,23 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import { validateVersions } from "./check-version.mjs";
 import { releaseNotes } from "./release-notes.mjs";
+
+test("external workflow actions use immutable commit SHAs", () => {
+  for (const name of fs.readdirSync(".github/workflows")) {
+    if (!name.endsWith(".yml")) continue;
+    const workflow = fs.readFileSync(`.github/workflows/${name}`, "utf8");
+    for (const match of workflow.matchAll(/^\s+(?:-\s+)?uses:\s+(\S+)/gm)) {
+      if (match[1].startsWith("./")) continue;
+      assert.match(
+        match[1],
+        /^[^@]+@[0-9a-f]{40}$/,
+        `${name}: external action ${match[1]} must use a full commit SHA`,
+      );
+    }
+  }
+});
 
 const changelog = `# Changelog
 ## [Unreleased]

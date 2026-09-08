@@ -8,9 +8,9 @@
 
 DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是企业监控软件，也不是要求用户维护复杂清单的项目管理工具。它只想帮用户看见昨天、选出今天最值得做的一件事，并更轻松地开始。
 
-当前版本：`0.6.0`（MVP 开发版）
+当前版本：`0.6.1`（MVP 开发版）
 
-[⬇️ 直接下载 DayMate 0.6.0 Windows 安装包](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.0/DayMate_0.6.0_x64-setup.exe) · [查看最新版本](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md)
+[⬇️ 直接下载 DayMate 0.6.1 Windows 安装包](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.1/DayMate_0.6.1_x64-setup.exe) · [查看最新版本](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md)
 
 ## 已实现
 
@@ -35,6 +35,7 @@ DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是
 - 系统托盘基础入口
 - 可拖动桌面浮动球：收起主窗口后常驻桌面，点击恢复
 - 深浅主题、本地状态持久化、前端测试、版本一致性检查
+- 安全与兼容加固：密钥绑定接口、浮球最小权限、事务迁移、损坏设置恢复备份和云端双 Windows 安装验证
 
 ## 应用截图
 
@@ -74,7 +75,7 @@ Rust / Tauri ├─ Windows 前台应用与空闲检测
              └─ SQLite：app_usage_sessions + migration_history
 ```
 
-关键设计说明见 [docs/architecture.md](docs/architecture.md)，[AI 工程复查](docs/ai-development-review.md)记录截至 2026-09-08 核对的官方建议和落地选择，隐私边界见 [PRIVACY.md](PRIVACY.md)。
+关键设计说明见 [docs/architecture.md](docs/architecture.md)，[AI 工程复查](docs/ai-development-review.md)记录截至 2026-09-08 核对的官方建议和落地选择；另见[安全与兼容性说明](docs/security-compatibility.md)及[隐私边界](PRIVACY.md)。
 
 ## 项目目录
 
@@ -86,7 +87,9 @@ daymate-desktop/
 │  ├─ store.ts           # 状态与选任务规则
 │  └─ native.ts          # Tauri 命令适配层
 ├─ src-tauri/            # Rust 桌面后端
-│  ├─ src/lib.rs         # 数据库、活动采集、命令、托盘
+│  ├─ src/lib.rs         # 活动采集、命令、托盘
+│  ├─ src/database.rs    # 事务迁移与版本保护
+│  ├─ src/ai.rs          # AI 请求、密钥绑定、预算与校验
 │  └─ tauri.conf.json    # 窗口和安装包配置
 ├─ docs/                 # 架构、开发、发布说明
 ├─ scripts/              # 版本一致性检查
@@ -164,6 +167,8 @@ src-tauri/target/release/bundle/nsis/
 ## 当前边界
 
 - 当前优先支持 Windows 10/11。
+- 自动安装验证使用 GitHub 托管 Windows Server 2022/2025，不等同于真实 Windows 10/11 全功能验收；目前安装包没有商业代码签名，Windows 可能显示发布者提醒。
+- 新版保存 AI 密钥后若降级到旧应用，需要重新配置密钥。活动数据库仍为 v5，升级前建议备份数据。
 - 任务与偏好当前由 WebView 本地存储保存；活动记录使用 SQLite。后续版本会统一迁移至 SQLite。
 - 开机自启与通知通过 Tauri 官方插件实现；Windows 勿扰模式可能隐藏通知横幅，设置页提供系统状态和测试按钮。
 - AI 自然语言总结尚未接入业务页面；v0.2.0 已完成多平台安全配置和连接基础。

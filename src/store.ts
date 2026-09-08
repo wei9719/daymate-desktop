@@ -1,7 +1,15 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Preferences, Priority, Task } from "./types";
-import { normalizeAiDailyLimit } from "./services/aiPreferences";
+import {
+  asRecord,
+  createTaskId,
+  restorePreferences,
+  restoreTasks,
+  safeStateStorage,
+  validDueDate,
+  validTaskMinutes,
+} from "./services/persistedState";
 
 const defaultPreferences: Preferences = {
   nickname: "朋友",
@@ -55,13 +63,13 @@ export const useAppStore = create<AppState>()(
       finishOnboarding: (preferences, firstTask) =>
         set((state) => ({
           onboarded: true,
-          preferences: { ...state.preferences, ...preferences },
+          preferences: restorePreferences(preferences, state.preferences),
           tasks: firstTask?.trim()
             ? [
                 ...state.tasks,
                 {
-                  id: crypto.randomUUID(),
-                  title: firstTask.trim(),
+                  id: createTaskId(),
+                  title: firstTask.trim().slice(0, 1000),
                   estimatedMinutes: 25,
                   priority: "high",
                   completed: false,
@@ -71,20 +79,26 @@ export const useAppStore = create<AppState>()(
             : state.tasks,
         })),
       addTask: (title, estimatedMinutes, priority, dueDate) =>
-        set((state) => ({
-          tasks: [
-            ...state.tasks,
-            {
-              id: crypto.randomUUID(),
-              title: title.trim(),
-              estimatedMinutes,
-              priority,
-              dueDate: dueDate || undefined,
-              completed: false,
-              createdAt: new Date().toISOString(),
-            },
-          ],
-        })),
+        set((state) =>
+          !title.trim()
+            ? state
+            : {
+                tasks: [
+                  ...state.tasks,
+                  {
+                    id: createTaskId(),
+                    title: title.trim().slice(0, 1000),
+                    estimatedMinutes: validTaskMinutes(estimatedMinutes),
+                    priority: ["high", "medium", "low"].includes(priority)
+                      ? priority
+                      : "medium",
+                    dueDate: validDueDate(dueDate),
+                    completed: false,
+                    createdAt: new Date().toISOString(),
+                  },
+                ],
+              },
+        ),
       toggleTask: (id) =>
         set((state) => ({
           tasks: state.tasks.map((task) =>
@@ -105,32 +119,33 @@ export const useAppStore = create<AppState>()(
         })),
       updatePreferences: (next) =>
         set((state) => ({
-          preferences: {
-            ...state.preferences,
-            ...next,
-            aiMaxDailyCalls: normalizeAiDailyLimit(
-              next.aiMaxDailyCalls ?? state.preferences.aiMaxDailyCalls,
-            ),
-          },
+          preferences: restorePreferences(next, state.preferences),
         })),
       clearActivityData: () => undefined,
     }),
     {
       name: "daymate-state-v1",
+      storage: safeStateStorage(() => window.localStorage),
+      partialize: ({ onboarded, tasks, preferences }) => ({
+        onboarded,
+        tasks,
+        preferences,
+      }),
       merge: (persisted, current) => {
-        const saved = persisted as Partial<AppState>;
+        const saved = asRecord(persisted);
         return {
           ...current,
-          ...saved,
-          preferences: {
-            ...current.preferences,
-            ...saved.preferences,
-            aiMaxDailyCalls: normalizeAiDailyLimit(
-              saved.preferences?.aiMaxDailyCalls,
-            ),
-            aiShareActivitySummary:
-              saved.preferences?.aiShareActivitySummary === true,
-          },
+          onboarded:
+            typeof saved?.onboarded === "boolean"
+              ? saved.onboarded
+              : current.onboarded,
+          tasks: Array.isArray(saved?.tasks)
+            ? restoreTasks(saved.tasks)
+            : current.tasks,
+          preferences: restorePreferences(
+            saved?.preferences,
+            current.preferences,
+          ),
         };
       },
     },

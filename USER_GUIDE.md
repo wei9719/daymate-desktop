@@ -4,10 +4,10 @@
 
 ## 立即下载
 
-[⬇️ **直接下载 DayMate 0.6.0 Windows 安装包（64 位）**](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.0/DayMate_0.6.0_x64-setup.exe)
+[⬇️ **直接下载 DayMate 0.6.1 Windows 安装包（64 位）**](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.1/DayMate_0.6.1_x64-setup.exe)
 
 - [查看最新版本与更新说明](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest)
-- [下载 SHA256 校验文件](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.0/SHA256SUMS.txt)
+- [下载 SHA256 校验文件](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.1/SHA256SUMS.txt)
 - 当前支持：Windows 10 / Windows 11，64 位
 - GitHub 账号：不需要
 - AI API Key：不需要；只有 AI 增强功能需要自行配置
@@ -16,7 +16,7 @@
 
 ## 1. 安装 DayMate
 
-1. 点击上方“直接下载”，保存 `DayMate_0.6.0_x64-setup.exe`。
+1. 点击上方“直接下载”，保存 `DayMate_0.6.1_x64-setup.exe`。
 2. 双击安装包，按照安装向导完成安装。
 3. 从桌面快捷方式或开始菜单打开“DayMate 日伴”。
 4. 第一次启动时完成昵称、身份、陪伴语气、隐私权限和首个任务设置。
@@ -28,7 +28,7 @@ Windows 可能因为应用仍处于早期发布阶段而显示 SmartScreen 提�
 在安装包所在文件夹打开 PowerShell，执行：
 
 ```powershell
-Get-FileHash .\DayMate_0.6.0_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\DayMate_0.6.1_x64-setup.exe -Algorithm SHA256
 ```
 
 将输出结果与 `SHA256SUMS.txt` 中对应文件的值比较；完全一致再安装。
@@ -171,6 +171,10 @@ API Key 保存在 Windows 凭据管理器，不会写入 Git 仓库、普通配�
 相同条件的结果可在 15 分钟内复用，界面会标记“近期缓存”。无网络、额度不足或返回格式无效时自动使用本地推荐。每日请求次数包含测试连接、失败及重试，不等同于服务商账单；关闭再打开应用不会重置当天次数。测试连接会发送固定短句。
 
 如服务地址不正确、密钥无权限或模型不可用，界面会给出具体处理提示。远程接口使用 HTTPS，本机 Ollama 可使用 HTTP；Base URL 不要附带 `/chat/completions` 或密钥参数。“删除密钥”只删除当前服务商的本机凭据，不会注销服务商账号。
+
+从 0.6.1 起，密钥绑定保存时的接口地址。修改地址后看到“当前接口未获授权”是保护措施，请核实地址可信，再重新输入并保存密钥。旧版官方默认地址配置可继续使用；旧自定义地址需重新保存。若降级到旧版应用，新格式凭据需要重新配置，不影响活动数据库和任务。
+
+如果本地设置损坏，应用会在覆盖前保留一份本机恢复副本；遇到“备份失败/已有不同恢复副本”时，先保留原 WebView 数据，不要反复重置或公开上传。恢复键为 `daymate-state-v1.recovery`，可请维护者协助在本机恢复。详细边界见[安全与兼容性说明](docs/security-compatibility.md)。
 
 ### 启动与通知
 

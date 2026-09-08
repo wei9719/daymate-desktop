@@ -1,0 +1,31 @@
+name: Dependency Audit
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: "35 2 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - name: Audit all npm dependencies against the official registry
+        run: npm audit --package-lock-only --include=dev --audit-level=high --registry=https://registry.npmjs.org
+      - name: Install pinned RustSec auditor
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Test fail-closed RustSec policy
+        run: node --test scripts/test-audit-rust.mjs
+      - name: Audit full Cargo.lock and block Windows unsound dependencies
+        run: node scripts/audit-rust.mjs

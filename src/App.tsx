@@ -71,7 +71,7 @@ import {
   getDataLocation,
   getAiUsage,
   getTodayStats,
-  hasAiKey,
+  getAiKeyStatus,
   recommendMusicWithAi,
   saveAiKey,
   setNativeTracking,
@@ -1712,7 +1712,9 @@ export function SettingsPage() {
   const [apiKey, setApiKey] = useState("");
   const [keyState, setKeyState] = useState({
     provider: "",
+    baseUrl: "",
     saved: false,
+    usable: false,
     checked: false,
   });
   const [aiStatus, setAiStatus] = useState("");
@@ -1727,25 +1729,34 @@ export function SettingsPage() {
   const systemRequestRunning = useRef(false);
   const theme = getDailyTheme(new Date(), preferences.backgroundOffset);
   const provider = findAiProvider(preferences.aiProvider);
-  const keySaved = keyState.provider === provider.id && keyState.saved;
-  const keyChecked = keyState.provider === provider.id && keyState.checked;
+  const currentKeyState =
+    keyState.provider === provider.id &&
+    keyState.baseUrl === preferences.aiBaseUrl;
+  const keySaved = currentKeyState && keyState.saved;
+  const keyUsable = currentKeyState && keyState.usable;
+  const keyChecked = currentKeyState && keyState.checked;
   useEffect(() => {
     const version = ++aiSettingsVersion.current;
-    hasAiKey(preferences.aiProvider)
-      .then((saved) => {
+    getAiKeyStatus(preferences.aiProvider, preferences.aiBaseUrl)
+      .then((status) => {
         if (version === aiSettingsVersion.current) {
           setKeyState({
             provider: preferences.aiProvider,
-            saved,
+            baseUrl: preferences.aiBaseUrl,
+            saved: status.saved,
+            usable: status.usable,
             checked: true,
           });
+          setAiStatus(status.message);
         }
       })
       .catch(() => {
         if (version === aiSettingsVersion.current) {
           setKeyState({
             provider: preferences.aiProvider,
+            baseUrl: preferences.aiBaseUrl,
             saved: false,
+            usable: false,
             checked: true,
           });
           setAiStatus("暂时无法读取系统凭据，请重新选择服务商后重试。");
@@ -1754,7 +1765,7 @@ export function SettingsPage() {
     return () => {
       aiSettingsVersion.current += 1;
     };
-  }, [preferences.aiProvider]);
+  }, [preferences.aiProvider, preferences.aiBaseUrl]);
   useEffect(() => {
     let active = true;
     getAiUsage()
@@ -1834,7 +1845,13 @@ export function SettingsPage() {
     setAiBusy(false);
     setApiKey("");
     setAiStatus("");
-    setKeyState({ provider: next.id, saved: false, checked: false });
+    setKeyState({
+      provider: next.id,
+      baseUrl: next.baseUrl,
+      saved: false,
+      usable: false,
+      checked: false,
+    });
     updatePreferences({
       aiProvider: next.id,
       aiBaseUrl: next.baseUrl,
@@ -1848,11 +1865,19 @@ export function SettingsPage() {
     setAiBusy(true);
     setAiStatus("");
     try {
-      await saveAiKey(provider.id, apiKey);
+      await saveAiKey(provider.id, preferences.aiBaseUrl, apiKey);
       if (version !== aiSettingsVersion.current) return;
-      setKeyState({ provider: provider.id, saved: true, checked: true });
+      setKeyState({
+        provider: provider.id,
+        baseUrl: preferences.aiBaseUrl,
+        saved: true,
+        usable: true,
+        checked: true,
+      });
       setApiKey("");
-      setAiStatus("API Key 已安全保存到 Windows 凭据管理器。");
+      setAiStatus(
+        "API Key 已安全保存到 Windows 凭据管理器，并绑定当前接口地址。",
+      );
     } catch (error) {
       if (version === aiSettingsVersion.current) setAiStatus(String(error));
     } finally {
@@ -1897,7 +1922,13 @@ export function SettingsPage() {
     try {
       await deleteAiKey(provider.id);
       if (version === aiSettingsVersion.current) {
-        setKeyState({ provider: provider.id, saved: false, checked: true });
+        setKeyState({
+          provider: provider.id,
+          baseUrl: preferences.aiBaseUrl,
+          saved: false,
+          usable: false,
+          checked: true,
+        });
         setApiKey("");
         setAiStatus("已删除该服务商的本地密钥。");
       }
@@ -2080,6 +2111,7 @@ export function SettingsPage() {
             Base URL
             <input
               value={preferences.aiBaseUrl}
+              maxLength={2048}
               disabled={aiBusy}
               onChange={(event) =>
                 updatePreferences({ aiBaseUrl: event.target.value })
@@ -2106,6 +2138,7 @@ export function SettingsPage() {
                   type="password"
                   autoComplete="off"
                   value={apiKey}
+                  maxLength={2048}
                   onChange={(event) => setApiKey(event.target.value)}
                   placeholder={
                     keySaved
@@ -2123,11 +2156,18 @@ export function SettingsPage() {
               </div>
             </label>
           )}
+          {provider.needsKey && (
+            <p className="ai-test-note">
+              保存密钥即确认仅用于当前接口：
+              {preferences.aiBaseUrl || "请先填写 Base URL"}。
+              修改接口地址后需重新输入并保存密钥，已有密钥不会自动转发到新地址。
+            </p>
+          )}
           <div className="ai-actions">
             <button
               className="button primary"
               disabled={
-                aiBusy || (provider.needsKey && (!keyChecked || !keySaved))
+                aiBusy || (provider.needsKey && (!keyChecked || !keyUsable))
               }
               onClick={testConnection}
             >
@@ -2144,11 +2184,13 @@ export function SettingsPage() {
             )}
             <span>
               {provider.needsKey
-                ? keySaved
+                ? keyUsable
                   ? "密钥已配置"
-                  : keyChecked
-                    ? "尚未配置密钥"
-                    : "正在读取密钥状态…"
+                  : keySaved
+                    ? "密钥已保存，但当前接口未获授权"
+                    : keyChecked
+                      ? "尚未配置密钥"
+                      : "正在读取密钥状态…"
                 : "本机服务无需密钥"}
             </span>
           </div>

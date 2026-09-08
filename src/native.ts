@@ -52,14 +52,24 @@ export async function showCompanionMenu() {
   if (isDesktop()) await invoke("show_companion_menu");
 }
 
-export async function saveAiKey(provider: string, apiKey: string) {
+export async function saveAiKey(
+  provider: string,
+  baseUrl: string,
+  apiKey: string,
+) {
   if (!isDesktop()) throw new Error("请在 DayMate 桌面版中保存密钥");
-  await invoke("save_ai_key", { provider, apiKey });
+  await invoke("save_ai_key", { provider, baseUrl, apiKey });
 }
 
-export async function hasAiKey(provider: string) {
-  if (!isDesktop()) return false;
-  return invoke<boolean>("has_ai_key", { provider });
+export interface AiKeyStatus {
+  saved: boolean;
+  usable: boolean;
+  message: string;
+}
+
+export async function getAiKeyStatus(provider: string, baseUrl: string) {
+  if (!isDesktop()) return { saved: false, usable: false, message: "" };
+  return invoke<AiKeyStatus>("get_ai_key_status", { provider, baseUrl });
 }
 
 export async function deleteAiKey(provider: string) {

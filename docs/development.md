@@ -34,6 +34,10 @@ npm run test
 npm run build
 npm run version:check
 node --test scripts/test-release.mjs
+node --test scripts/test-audit-rust.mjs
+npm audit --include=dev --audit-level=high --registry=https://registry.npmjs.org
+cargo install cargo-audit --version 0.22.2 --locked
+node scripts/audit-rust.mjs
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
@@ -46,6 +50,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - 不在日志中记录 API Key、窗口标题或任务全文。
 - 数据库结构只通过迁移前进，不删除重建用户数据库。
 - 新系统能力先放 Rust，再通过 `native.ts` 暴露给前端。
+- 新增原生命令必须加入 `build.rs` 的 AppManifest，再明确授权对应窗口；不要恢复 `core:default` 或给浮球授予数据/密钥权限。自动生成的命令权限由构建脚本生成，手工修改 capability。
+- 修改兼容逻辑需覆盖旧数据库、损坏存储、午夜、暂停/恢复和休眠等边界；升级测试只用合成数据。
 
 AI 自动化测试只使用临时 SQLite 与本机 HTTP 服务，不需要生产 Key，不会发送个人数据。实测供应商接口应通过应用设置中的测试连接，并使用少量请求。工程决策见 [AI 工程复查](ai-development-review.md)。
 
