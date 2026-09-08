@@ -4,10 +4,10 @@
 
 ## 立即下载
 
-[⬇️ **直接下载 DayMate 0.5.0 Windows 安装包（64 位）**](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.5.0/DayMate_0.5.0_x64-setup.exe)
+[⬇️ **直接下载 DayMate 0.6.0 Windows 安装包（64 位）**](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.0/DayMate_0.6.0_x64-setup.exe)
 
 - [查看最新版本与更新说明](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest)
-- [下载 SHA256 校验文件](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.5.0/SHA256SUMS.txt)
+- [下载 SHA256 校验文件](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.0/SHA256SUMS.txt)
 - 当前支持：Windows 10 / Windows 11，64 位
 - GitHub 账号：不需要
 - AI API Key：不需要；只有 AI 增强功能需要自行配置
@@ -16,7 +16,7 @@
 
 ## 1. 安装 DayMate
 
-1. 点击上方“直接下载”，保存 `DayMate_0.5.0_x64-setup.exe`。
+1. 点击上方“直接下载”，保存 `DayMate_0.6.0_x64-setup.exe`。
 2. 双击安装包，按照安装向导完成安装。
 3. 从桌面快捷方式或开始菜单打开“DayMate 日伴”。
 4. 第一次启动时完成昵称、身份、陪伴语气、隐私权限和首个任务设置。
@@ -28,7 +28,7 @@ Windows 可能因为应用仍处于早期发布阶段而显示 SmartScreen 提�
 在安装包所在文件夹打开 PowerShell，执行：
 
 ```powershell
-Get-FileHash .\DayMate_0.5.0_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\DayMate_0.6.0_x64-setup.exe -Algorithm SHA256
 ```
 
 将输出结果与 `SHA256SUMS.txt` 中对应文件的值比较；完全一致再安装。
@@ -161,11 +161,22 @@ DayMate 使用 Windows 的“最近一次键鼠输入时间”判断电脑是否
 2. 开启“AI 增强”。
 3. 选择服务商，例如商汤日日新、OpenAI、DeepSeek、通义千问、硅基流动、智谱、Moonshot、OpenRouter、Ollama 或自定义 OpenAI 兼容接口。
 4. 填写服务商提供的 Base URL、模型名称和 API Key。
-5. 点击“测试连接”，成功后保存。
+5. 先点击“保存密钥”，再点击“测试连接”。普通服务配置自动保存在本机。
+6. 设置“每日 AI 调用上限”（默认 20 次）。需要按今日活动调整推荐时，再开启汇总分享。
 
 API Key 保存在 Windows 凭据管理器，不会写入 Git 仓库、普通配置、SQLite 活动数据库或日志。不要把自己的 Key 发到 GitHub Issue、截图或公开聊天中。
 
-AI 音乐推荐只发送必要的汇总信息，例如活跃分钟、未完成任务数量和音乐偏好；不会默认发送窗口标题、任务正文或聊天内容。
+点击 AI 推荐会先展示发送预览，确认后才调用。默认只发送音乐类别；开启汇总分享后才发送活跃分钟数和未完成任务数量。无论是否开启，都不会发送窗口标题、任务标题、正文或聊天内容。
+
+相同条件的结果可在 15 分钟内复用，界面会标记“近期缓存”。无网络、额度不足或返回格式无效时自动使用本地推荐。每日请求次数包含测试连接、失败及重试，不等同于服务商账单；关闭再打开应用不会重置当天次数。测试连接会发送固定短句。
+
+如服务地址不正确、密钥无权限或模型不可用，界面会给出具体处理提示。远程接口使用 HTTPS，本机 Ollama 可使用 HTTP；Base URL 不要附带 `/chat/completions` 或密钥参数。“删除密钥”只删除当前服务商的本机凭据，不会注销服务商账号。
+
+### 启动与通知
+
+“设置 → 启动与通知”的开机启动开关读取 Windows 实际状态，开启后在登录时运行，关闭即撤销。自启保留当前活动数据目录；已完成引导时按浮动球偏好安静启动。
+
+允许桌面通知后，专注倒计时结束或手动完成时可收到固定提示。可用“发送测试通知”检查；系统勿扰、通知禁用或开发版未注册都可能影响显示。界面会显示系统状态，提交成功表示已交给 Windows，并不保证横幅一定出现。
 
 ## 10. 数据与隐私
 

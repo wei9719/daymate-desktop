@@ -1,6 +1,8 @@
 use chrono::{DateTime, Local, Utc};
 use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+mod ai;
+mod system;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -20,6 +22,7 @@ use tauri::{
 const AI_KEYRING_SERVICE: &str = "com.daymate.desktop.ai";
 
 struct AppState {
+    ai: Arc<ai::AiRuntime>,
     database_path: PathBuf,
     tracking_enabled: Arc<AtomicBool>,
     title_capture_enabled: Arc<AtomicBool>,
@@ -70,13 +73,6 @@ struct SessionMetrics {
     idle_seconds: i64,
     mouse_clicks: i64,
     key_presses: i64,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AiMusicSuggestion {
-    category: String,
-    reason: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +158,14 @@ fn initialize_database(path: &Path) -> Result<(), String> {
                  INSERT INTO migration_history(version, applied_at) VALUES (4, datetime('now'));",
             )
             .map_err(|error| error.to_string())?;
+    }
+    if version < 5 {
+        connection.execute_batch(
+            "BEGIN IMMEDIATE;
+             CREATE TABLE IF NOT EXISTS ai_daily_usage (date TEXT PRIMARY KEY, calls INTEGER NOT NULL DEFAULT 0 CHECK(calls >= 0));
+             INSERT INTO migration_history(version, applied_at) VALUES (5, datetime('now'));
+             COMMIT;",
+        ).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -648,14 +652,20 @@ fn ai_key_entry(provider: &str) -> Result<keyring::Entry, String> {
 }
 
 #[tauri::command]
-fn save_ai_key(provider: String, api_key: String) -> Result<(), String> {
+fn save_ai_key(
+    state: State<'_, AppState>,
+    provider: String,
+    api_key: String,
+) -> Result<(), String> {
     let api_key = api_key.trim();
     if api_key.is_empty() {
         return Err("API Key 不能为空".into());
     }
     ai_key_entry(&provider)?
         .set_password(api_key)
-        .map_err(|error| error.to_string())
+        .map_err(|_| "密钥保存失败，请检查 Windows 凭据管理器".to_string())?;
+    state.ai.clear_cache();
+    Ok(())
 }
 
 #[tauri::command]
@@ -664,139 +674,83 @@ fn has_ai_key(provider: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn delete_ai_key(provider: String) -> Result<(), String> {
+fn delete_ai_key(state: State<'_, AppState>, provider: String) -> Result<(), String> {
     let entry = ai_key_entry(&provider)?;
     if entry.get_password().is_ok() {
         entry
             .delete_credential()
             .map_err(|error| error.to_string())?;
     }
+    state.ai.clear_cache();
     Ok(())
 }
 
-fn send_ai_request(
-    request: reqwest::blocking::RequestBuilder,
-    error_prefix: &str,
-) -> Result<reqwest::blocking::Response, String> {
-    let retry = request.try_clone();
-    match request.send() {
-        Ok(response) => Ok(response),
-        Err(error) if error.is_connect() || error.is_timeout() => {
-            let Some(retry) = retry else {
-                return Err(format!("{error_prefix}：{error}"));
-            };
-            thread::sleep(Duration::from_millis(350));
-            retry
-                .send()
-                .map_err(|retry_error| format!("{error_prefix}：{retry_error}"))
-        }
-        Err(error) => Err(format!("{error_prefix}：{error}")),
-    }
-}
-
 #[tauri::command]
-fn test_ai_connection(
+async fn test_ai_connection(
+    state: State<'_, AppState>,
     provider: String,
     base_url: String,
     model: String,
     needs_key: bool,
+    max_daily_calls: u32,
 ) -> Result<String, String> {
-    let base_url = base_url.trim().trim_end_matches('/');
-    let is_local =
-        base_url.starts_with("http://127.0.0.1") || base_url.starts_with("http://localhost");
-    if !base_url.starts_with("https://") && !is_local {
-        return Err("远程 AI 接口必须使用 HTTPS；仅本机 Ollama 可使用 HTTP".into());
-    }
-    if model.trim().is_empty() {
-        return Err("模型名称不能为空".into());
-    }
-    let mut request = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|error| error.to_string())?
-        .post(format!("{base_url}/chat/completions"))
-        .json(&serde_json::json!({
-            "model": model.trim(),
-            "messages": [{ "role": "user", "content": "请只回复：连接成功" }],
-            "max_tokens": 16,
-            "temperature": 0
-        }));
-    if needs_key {
-        let key = ai_key_entry(&provider)?
-            .get_password()
-            .map_err(|_| "请先保存该服务商的 API Key".to_string())?;
-        request = request.bearer_auth(key);
-    }
-    let response = send_ai_request(request, "连接失败")?;
-    let status = response.status();
-    if !status.is_success() {
-        let detail = response.text().unwrap_or_default();
-        let detail = detail.chars().take(180).collect::<String>();
-        return Err(format!("接口返回 {status}：{detail}"));
-    }
-    Ok("连接成功，配置可以使用。".into())
+    let path = state.database_path.clone();
+    let runtime = state.ai.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime.test(
+            &path,
+            ai::AiConfig {
+                provider,
+                base_url,
+                model,
+                needs_key,
+                max_daily_calls,
+            },
+        )
+    })
+    .await
+    .map_err(|_| "AI 请求未能完成，请稍后重试".to_string())?
 }
 
 #[tauri::command]
-fn recommend_music_with_ai(
+#[allow(clippy::too_many_arguments)]
+async fn recommend_music_with_ai(
+    state: State<'_, AppState>,
     provider: String,
     base_url: String,
     model: String,
     preferred_category: String,
-    active_minutes: i64,
-    unfinished_tasks: usize,
-) -> Result<AiMusicSuggestion, String> {
-    let base_url = base_url.trim().trim_end_matches('/');
-    let is_local =
-        base_url.starts_with("http://127.0.0.1") || base_url.starts_with("http://localhost");
-    if !base_url.starts_with("https://") && !is_local {
-        return Err("远程 AI 接口必须使用 HTTPS".into());
-    }
-    let prompt = format!(
-        "你是温和的音乐陪伴助手。根据这些最小化汇总数据选择一个音乐类别：当前偏好={preferred_category}，今日电脑活跃={active_minutes}分钟，未完成任务={unfinished_tasks}项。只能从 smart、focus、chinese、classical、ambient、electronic 中选一个。只返回JSON：{{\"category\":\"focus\",\"reason\":\"一句不超过40字的中文理由\"}}。不要推荐具体商业歌曲。"
-    );
-    let mut request = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(25))
-        .build()
-        .map_err(|error| error.to_string())?
-        .post(format!("{base_url}/chat/completions"))
-        .json(&serde_json::json!({
-            "model": model.trim(),
-            "messages": [{ "role": "user", "content": prompt }],
-            "max_tokens": 120,
-            "temperature": 0.4
-        }));
-    if provider != "ollama" {
-        let key = ai_key_entry(&provider)?
-            .get_password()
-            .map_err(|_| "请先在设置中保存该服务商的 API Key".to_string())?;
-        request = request.bearer_auth(key);
-    }
-    let response = send_ai_request(request, "AI 推荐失败")?;
-    if !response.status().is_success() {
-        return Err(format!("AI 接口返回 {}", response.status()));
-    }
-    let body: serde_json::Value = response.json().map_err(|error| error.to_string())?;
-    let content = body["choices"][0]["message"]["content"]
-        .as_str()
-        .ok_or("AI 没有返回可读取的推荐")?;
-    let start = content.find('{').ok_or("AI 推荐格式不正确")?;
-    let end = content.rfind('}').ok_or("AI 推荐格式不正确")?;
-    let suggestion: AiMusicSuggestion =
-        serde_json::from_str(&content[start..=end]).map_err(|_| "AI 推荐格式不正确")?;
-    if ![
-        "smart",
-        "focus",
-        "chinese",
-        "classical",
-        "ambient",
-        "electronic",
-    ]
-    .contains(&suggestion.category.as_str())
-    {
-        return Err("AI 返回了不支持的音乐类别".into());
-    }
-    Ok(suggestion)
+    active_minutes: Option<i64>,
+    unfinished_tasks: Option<usize>,
+    needs_key: bool,
+    max_daily_calls: u32,
+) -> Result<ai::MusicSuggestion, String> {
+    let path = state.database_path.clone();
+    let runtime = state.ai.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime.recommend(
+            &path,
+            ai::AiConfig {
+                provider,
+                base_url,
+                model,
+                needs_key,
+                max_daily_calls,
+            },
+            ai::MusicContext {
+                preferred_category,
+                active_minutes,
+                unfinished_tasks,
+            },
+        )
+    })
+    .await
+    .map_err(|_| "AI 请求未能完成，请稍后重试".to_string())?
+}
+
+#[tauri::command]
+fn get_ai_usage(state: State<'_, AppState>) -> Result<ai::AiUsage, String> {
+    ai::usage(&state.database_path)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -806,16 +760,21 @@ pub fn run() {
             show_main_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            let argument_data_dir = system::data_dir_from_args().map_err(std::io::Error::other)?;
             let data_dir = std::env::var_os("DAYMATE_DATA_DIR")
                 .map(PathBuf::from)
+                .or(argument_data_dir)
                 .unwrap_or(app.path().app_data_dir()?);
             std::fs::create_dir_all(&data_dir)?;
+            app.handle().plugin(system::autostart_plugin(&data_dir))?;
             let database_path = data_dir.join("daymate.sqlite3");
             initialize_database(&database_path).map_err(std::io::Error::other)?;
             let state = AppState {
+                ai: Arc::new(ai::AiRuntime::default()),
                 database_path,
-                tracking_enabled: Arc::new(AtomicBool::new(true)),
+                tracking_enabled: Arc::new(AtomicBool::new(false)),
                 title_capture_enabled: Arc::new(AtomicBool::new(false)),
                 idle_detection_enabled: Arc::new(AtomicBool::new(true)),
                 reset_requested: Arc::new(AtomicBool::new(false)),
@@ -879,7 +838,12 @@ pub fn run() {
             has_ai_key,
             delete_ai_key,
             test_ai_connection,
-            recommend_music_with_ai
+            recommend_music_with_ai,
+            get_ai_usage,
+            system::get_system_integration_status,
+            system::set_system_autostart,
+            system::send_test_notification,
+            system::send_focus_completed_notification
         ])
         .run(tauri::generate_context!())
         .expect("error while running DayMate");
@@ -934,7 +898,7 @@ mod tests {
                 row.get(0)
             })
             .expect("read migration version");
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         drop(statement);
         drop(connection);
         let _ = std::fs::remove_file(path);
@@ -1011,7 +975,8 @@ mod tests {
                 row.get(0)
             })
             .expect("read migration version");
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
+        initialize_database(&path).expect("reopening keeps the migrated database intact");
         drop(connection);
         let _ = std::fs::remove_file(path);
     }

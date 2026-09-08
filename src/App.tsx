@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { isTauri } from "@tauri-apps/api/core";
 import {
   Bar,
   BarChart,
@@ -51,11 +52,24 @@ import {
 } from "./services/music";
 import { getDailyTheme } from "./services/dailyTheme";
 import { aiProviders, findAiProvider } from "./services/aiProviders";
+import {
+  matchesAiMusicPreferences,
+  prepareAiMusicRequest,
+  resolveAiMusicRecommendation,
+} from "./services/aiRecommendation";
+import {
+  getSystemIntegrationStatus,
+  setSystemAutostart,
+  sendTestNotification,
+  sendFocusCompletedNotification,
+} from "./services/system";
+import { version as appVersion } from "../package.json";
 import { selectNextTask, useAppStore } from "./store";
 import {
   deleteAiKey,
   deleteNativeActivity,
   getDataLocation,
+  getAiUsage,
   getTodayStats,
   hasAiKey,
   recommendMusicWithAi,
@@ -64,6 +78,8 @@ import {
   showCompanionMenu,
   testAiConnection,
   type TodayStats,
+  type AiMusicRequest,
+  type AiUsage,
 } from "./native";
 import type { Page, Priority, Task } from "./types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -330,18 +346,46 @@ function AddTaskModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function FocusModal({ task, onClose }: { task: Task; onClose: () => void }) {
+export function FocusModal({
+  task,
+  onClose,
+}: {
+  task: Task;
+  onClose: () => void;
+}) {
   const toggleTask = useAppStore((state) => state.toggleTask);
+  const taskCompleted = useAppStore(
+    (state) =>
+      state.tasks.find((item) => item.id === task.id)?.completed ??
+      task.completed,
+  );
   const [seconds, setSeconds] = useState(task.estimatedMinutes * 60);
   const [running, setRunning] = useState(true);
+  const [ended, setEnded] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState("");
+  const notificationSent = useRef(false);
+  const notifyCompletion = useCallback(() => {
+    if (notificationSent.current) return;
+    notificationSent.current = true;
+    if (!useAppStore.getState().preferences.notifications) return;
+    sendFocusCompletedNotification().catch(() =>
+      setNotificationStatus(
+        "专注已经完成，系统通知未能发送。可以稍后在设置中测试通知。",
+      ),
+    );
+  }, []);
   useEffect(() => {
     if (!running || seconds <= 0) return;
-    const timer = window.setInterval(
-      () => setSeconds((value) => value - 1),
-      1000,
-    );
+    const timer = window.setInterval(() => {
+      setSeconds((value) => Math.max(0, value - 1));
+      if (seconds <= 1) {
+        setRunning(false);
+        setEnded(true);
+        notifyCompletion();
+      }
+    }, 1000);
     return () => window.clearInterval(timer);
-  }, [running, seconds]);
+  }, [running, seconds, notifyCompletion]);
   const progress = 1 - seconds / (task.estimatedMinutes * 60);
   return (
     <div className="focus-overlay">
@@ -349,7 +393,7 @@ function FocusModal({ task, onClose }: { task: Task; onClose: () => void }) {
         <X />
       </button>
       <div className="focus-content">
-        <p className="eyebrow">正在专注</p>
+        <p className="eyebrow">{ended ? "这一段专注完成了" : "正在专注"}</p>
         <h2>{task.title}</h2>
         <div
           className="timer-ring"
@@ -363,29 +407,49 @@ function FocusModal({ task, onClose }: { task: Task; onClose: () => void }) {
               {String(seconds % 60).padStart(2, "0")}
             </strong>
             <span>
-              {running ? "慢慢来，只做眼前这一点" : "已经暂停，准备好再继续"}
+              {ended
+                ? "辛苦了，留一点时间给自己"
+                : running
+                  ? "慢慢来，只做眼前这一点"
+                  : "已经暂停，准备好再继续"}
             </span>
           </div>
         </div>
         <div className="focus-actions">
-          <button
-            className="button secondary"
-            onClick={() => setRunning(!running)}
-          >
-            {running ? <Pause /> : <Play />}
-            {running ? "暂停" : "继续"}
-          </button>
-          <button
-            className="button primary"
-            onClick={() => {
-              if (!task.completed) toggleTask(task.id);
-              onClose();
-            }}
-          >
-            <Check />
-            完成任务
-          </button>
+          {ended ? (
+            <button className="button secondary" onClick={onClose}>
+              回到今天
+            </button>
+          ) : (
+            <button
+              className="button secondary"
+              onClick={() => setRunning(!running)}
+            >
+              {running ? <Pause /> : <Play />}
+              {running ? "暂停" : "继续"}
+            </button>
+          )}
+          {!taskCompleted && (
+            <button
+              className="button primary"
+              onClick={() => {
+                if (
+                  !useAppStore
+                    .getState()
+                    .tasks.find((item) => item.id === task.id)?.completed
+                )
+                  toggleTask(task.id);
+                setRunning(false);
+                setEnded(true);
+                notifyCompletion();
+              }}
+            >
+              <Check />
+              完成任务
+            </button>
+          )}
         </div>
+        {notificationStatus && <p role="status">{notificationStatus}</p>}
       </div>
     </div>
   );
@@ -1249,7 +1313,7 @@ function ReviewPage() {
   );
 }
 
-function ContentPage() {
+export function ContentPage() {
   const [contentOffset, setContentOffset] = useState(0);
   const [musicOffset, setMusicOffset] = useState(0);
   const [searchDraft, setSearchDraft] = useState("");
@@ -1257,8 +1321,21 @@ function ContentPage() {
   const [localTrack, setLocalTrack] = useState<{ name: string; url: string }>();
   const [aiMusicStatus, setAiMusicStatus] = useState("");
   const [aiMusicBusy, setAiMusicBusy] = useState(false);
+  const [pendingAiRequest, setPendingAiRequest] = useState<AiMusicRequest>();
+  const aiMusicRequestRunning = useRef(false);
+  const aiMusicRequestVersion = useRef(0);
   const { preferences, updatePreferences } = useAppStore();
   const content = getDailyContent(contentOffset);
+  const preview =
+    pendingAiRequest && matchesAiMusicPreferences(pendingAiRequest, preferences)
+      ? pendingAiRequest
+      : undefined;
+  useEffect(
+    () => () => {
+      aiMusicRequestVersion.current += 1;
+    },
+    [],
+  );
   useEffect(
     () => () => {
       if (localTrack) URL.revokeObjectURL(localTrack.url);
@@ -1271,27 +1348,66 @@ function ContentPage() {
     setSearchDraft("");
     setMusicOffset((value) => value + 1);
   };
-  const askAiForMusic = async () => {
+  const previewAiMusic = async () => {
+    if (aiMusicRequestRunning.current || !preferences.aiEnabled) return;
+    aiMusicRequestRunning.current = true;
+    const requestVersion = ++aiMusicRequestVersion.current;
     setAiMusicBusy(true);
-    setAiMusicStatus("正在结合今天的节奏挑选…");
+    setAiMusicStatus("");
     try {
-      const stats = await getTodayStats();
-      const suggestion = await recommendMusicWithAi({
-        provider: preferences.aiProvider,
-        baseUrl: preferences.aiBaseUrl,
-        model: preferences.aiModel,
-        preferredCategory: preferences.musicCategory,
-        activeMinutes: Math.floor(stats.activeSeconds / 60),
-        unfinishedTasks: useAppStore
-          .getState()
-          .tasks.filter((task) => !task.completed).length,
-      });
-      chooseCategory(suggestion.category as MusicCategory);
-      setAiMusicStatus(suggestion.reason);
-    } catch (error) {
-      setAiMusicStatus(String(error));
+      const request = await prepareAiMusicRequest(
+        preferences,
+        async () => (await getTodayStats()).activeSeconds,
+        () =>
+          useAppStore.getState().tasks.filter((task) => !task.completed).length,
+      );
+      if (
+        requestVersion === aiMusicRequestVersion.current &&
+        matchesAiMusicPreferences(request, useAppStore.getState().preferences)
+      ) {
+        setPendingAiRequest(request);
+      }
+    } catch {
+      if (requestVersion === aiMusicRequestVersion.current) {
+        setAiMusicStatus(
+          "暂时无法读取本地摘要。可以关闭设置中的摘要分享后重试，音乐播放仍可使用。",
+        );
+      }
     } finally {
-      setAiMusicBusy(false);
+      aiMusicRequestRunning.current = false;
+      if (requestVersion === aiMusicRequestVersion.current)
+        setAiMusicBusy(false);
+    }
+  };
+  const askAiForMusic = async () => {
+    if (!preview || aiMusicRequestRunning.current) return;
+    aiMusicRequestRunning.current = true;
+    const requestVersion = ++aiMusicRequestVersion.current;
+    const request = preview;
+    setPendingAiRequest(undefined);
+    setAiMusicBusy(true);
+    setAiMusicStatus("正在挑选适合的音乐类别…");
+    try {
+      const suggestion = await resolveAiMusicRecommendation(
+        request,
+        recommendMusicWithAi,
+      );
+      if (requestVersion !== aiMusicRequestVersion.current) return;
+      if (
+        !matchesAiMusicPreferences(request, useAppStore.getState().preferences)
+      ) {
+        setAiMusicStatus("设置或音乐偏好已改变，本次结果未应用，请重新推荐。");
+        return;
+      }
+      chooseCategory(suggestion.category);
+      const source = { ai: "AI 推荐", cache: "近期缓存", local: "本地推荐" }[
+        suggestion.source
+      ];
+      setAiMusicStatus(`${source} · ${suggestion.reason}`);
+    } finally {
+      aiMusicRequestRunning.current = false;
+      if (requestVersion === aiMusicRequestVersion.current)
+        setAiMusicBusy(false);
     }
   };
   return (
@@ -1358,13 +1474,68 @@ function ContentPage() {
               className="button secondary"
               type="button"
               disabled={!preferences.aiEnabled || aiMusicBusy}
-              onClick={askAiForMusic}
+              onClick={previewAiMusic}
             >
               <Sparkles /> AI 按今日节奏推荐
             </button>
             {!preferences.aiEnabled && <span>先在设置中启用并测试 AI</span>}
           </div>
-          {aiMusicStatus && <p className="ai-music-reason">{aiMusicStatus}</p>}
+          {preview && (
+            <section className="ai-preview" aria-label="AI 推荐发送预览">
+              <strong>确认本次发送内容</strong>
+              <p>
+                {findAiProvider(preview.provider).name} · {preview.model}
+              </p>
+              <p className="ai-endpoint">接收地址：{preview.baseUrl}</p>
+              <ul>
+                <li>
+                  音乐偏好：
+                  {
+                    musicCategories.find(
+                      (item) => item.id === preview.preferredCategory,
+                    )?.label
+                  }
+                </li>
+                {preview.activeMinutes !== null && (
+                  <li>今日活跃时长：{preview.activeMinutes} 分钟</li>
+                )}
+                {preview.unfinishedTasks !== null && (
+                  <li>未完成任务数量：{preview.unfinishedTasks} 项</li>
+                )}
+              </ul>
+              <p>
+                {preview.activeMinutes === null
+                  ? "本次不发送活动统计或任务信息。"
+                  : "仅发送以上汇总数字，不含应用名称和任务内容。"}{" "}
+                可在设置中调整摘要分享。
+              </p>
+              <p>
+                确认后会访问该服务；每日最多 {preview.maxDailyCalls}{" "}
+                次请求，测试连接和重试也计入。相同内容的推荐缓存 15
+                分钟，命中缓存时不发起新请求。
+              </p>
+              <div className="ai-actions">
+                <button
+                  className="button primary"
+                  disabled={aiMusicBusy}
+                  onClick={askAiForMusic}
+                >
+                  确认推荐
+                </button>
+                <button
+                  className="button ghost"
+                  onClick={() => setPendingAiRequest(undefined)}
+                >
+                  取消
+                </button>
+              </div>
+            </section>
+          )}
+          {aiMusicStatus && (
+            <p className="ai-music-reason" role="status">
+              {aiMusicStatus}
+            </p>
+          )}
           {search && (
             <p className="search-note">
               正在搜索“{search}”{" "}
@@ -1535,28 +1706,135 @@ function PrivacyPage() {
   );
 }
 
-function SettingsPage() {
+export function SettingsPage() {
+  const desktop = isTauri();
   const { preferences, updatePreferences } = useAppStore();
   const [apiKey, setApiKey] = useState("");
-  const [keySaved, setKeySaved] = useState(false);
+  const [keyState, setKeyState] = useState({
+    provider: "",
+    saved: false,
+    checked: false,
+  });
   const [aiStatus, setAiStatus] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
+  const [aiUsage, setAiUsage] = useState<AiUsage>();
+  const aiSettingsVersion = useRef(0);
+  const aiSettingsRunning = useRef(false);
+  const [systemStatus, setSystemStatus] =
+    useState<Awaited<ReturnType<typeof getSystemIntegrationStatus>>>();
+  const [systemMessage, setSystemMessage] = useState("");
+  const [systemBusy, setSystemBusy] = useState(false);
+  const systemRequestRunning = useRef(false);
   const theme = getDailyTheme(new Date(), preferences.backgroundOffset);
   const provider = findAiProvider(preferences.aiProvider);
+  const keySaved = keyState.provider === provider.id && keyState.saved;
+  const keyChecked = keyState.provider === provider.id && keyState.checked;
   useEffect(() => {
+    const version = ++aiSettingsVersion.current;
     hasAiKey(preferences.aiProvider)
-      .then(setKeySaved)
-      .catch(() => setKeySaved(false));
+      .then((saved) => {
+        if (version === aiSettingsVersion.current) {
+          setKeyState({
+            provider: preferences.aiProvider,
+            saved,
+            checked: true,
+          });
+        }
+      })
+      .catch(() => {
+        if (version === aiSettingsVersion.current) {
+          setKeyState({
+            provider: preferences.aiProvider,
+            saved: false,
+            checked: true,
+          });
+          setAiStatus("暂时无法读取系统凭据，请重新选择服务商后重试。");
+        }
+      });
+    return () => {
+      aiSettingsVersion.current += 1;
+    };
   }, [preferences.aiProvider]);
+  useEffect(() => {
+    let active = true;
+    getAiUsage()
+      .then((usage) => {
+        if (active) setAiUsage(usage);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!desktop) return;
+    let active = true;
+    getSystemIntegrationStatus()
+      .then((status) => {
+        if (!active) return;
+        setSystemStatus(status);
+        updatePreferences({ autostart: status.autostartEnabled });
+      })
+      .catch(() => {
+        if (active)
+          setSystemMessage("暂时无法读取系统设置，请重新打开设置页重试。");
+      });
+    return () => {
+      active = false;
+    };
+  }, [desktop, updatePreferences]);
+  const updateAutostart = async (enabled: boolean) => {
+    if (systemRequestRunning.current) return;
+    systemRequestRunning.current = true;
+    setSystemBusy(true);
+    setSystemMessage("");
+    try {
+      const actual = await setSystemAutostart(enabled);
+      setSystemStatus(
+        (current) => current && { ...current, autostartEnabled: actual },
+      );
+      updatePreferences({ autostart: actual });
+      setSystemMessage(
+        actual ? "已开启 Windows 登录后启动 DayMate。" : "已关闭开机自动启动。",
+      );
+    } catch (error) {
+      setSystemMessage(String(error));
+    } finally {
+      systemRequestRunning.current = false;
+      setSystemBusy(false);
+    }
+  };
+  const testNotification = async () => {
+    if (systemRequestRunning.current || !preferences.notifications) return;
+    systemRequestRunning.current = true;
+    setSystemBusy(true);
+    setSystemMessage("");
+    try {
+      await sendTestNotification();
+      const status = await getSystemIntegrationStatus();
+      setSystemStatus(status);
+      setSystemMessage(
+        "测试通知已交给 Windows。若没有弹出，请检查系统通知和勿扰设置。",
+      );
+    } catch (error) {
+      setSystemMessage(String(error));
+    } finally {
+      systemRequestRunning.current = false;
+      setSystemBusy(false);
+    }
+  };
   const updateFloatingBall = (enabled: boolean) => {
     updatePreferences({ floatingBall: enabled });
     if (!enabled) hideCompanion().catch(() => undefined);
   };
   const selectProvider = (id: string) => {
     const next = findAiProvider(id);
+    aiSettingsVersion.current += 1;
+    aiSettingsRunning.current = false;
+    setAiBusy(false);
     setApiKey("");
     setAiStatus("");
-    setKeySaved(false);
+    setKeyState({ provider: next.id, saved: false, checked: false });
     updatePreferences({
       aiProvider: next.id,
       aiBaseUrl: next.baseUrl,
@@ -1564,35 +1842,72 @@ function SettingsPage() {
     });
   };
   const storeKey = async () => {
+    if (aiSettingsRunning.current || !apiKey.trim()) return;
+    aiSettingsRunning.current = true;
+    const version = ++aiSettingsVersion.current;
     setAiBusy(true);
     setAiStatus("");
     try {
       await saveAiKey(provider.id, apiKey);
-      setKeySaved(true);
+      if (version !== aiSettingsVersion.current) return;
+      setKeyState({ provider: provider.id, saved: true, checked: true });
       setApiKey("");
       setAiStatus("API Key 已安全保存到 Windows 凭据管理器。");
     } catch (error) {
-      setAiStatus(String(error));
+      if (version === aiSettingsVersion.current) setAiStatus(String(error));
     } finally {
-      setAiBusy(false);
+      if (version === aiSettingsVersion.current) {
+        aiSettingsRunning.current = false;
+        setAiBusy(false);
+      }
     }
   };
   const testConnection = async () => {
+    if (aiSettingsRunning.current) return;
+    aiSettingsRunning.current = true;
+    const version = ++aiSettingsVersion.current;
     setAiBusy(true);
     setAiStatus("正在测试连接…");
     try {
-      setAiStatus(
-        await testAiConnection(
-          provider.id,
-          preferences.aiBaseUrl,
-          preferences.aiModel,
-          provider.needsKey,
-        ),
+      const status = await testAiConnection(
+        provider.id,
+        preferences.aiBaseUrl,
+        preferences.aiModel,
+        provider.needsKey,
+        preferences.aiMaxDailyCalls,
       );
+      if (version === aiSettingsVersion.current) setAiStatus(status);
     } catch (error) {
-      setAiStatus(String(error));
+      if (version === aiSettingsVersion.current) setAiStatus(String(error));
     } finally {
-      setAiBusy(false);
+      const usage = await getAiUsage().catch(() => undefined);
+      if (version === aiSettingsVersion.current) {
+        if (usage) setAiUsage(usage);
+        aiSettingsRunning.current = false;
+        setAiBusy(false);
+      }
+    }
+  };
+  const removeKey = async () => {
+    if (aiSettingsRunning.current) return;
+    aiSettingsRunning.current = true;
+    const version = ++aiSettingsVersion.current;
+    setAiBusy(true);
+    setAiStatus("");
+    try {
+      await deleteAiKey(provider.id);
+      if (version === aiSettingsVersion.current) {
+        setKeyState({ provider: provider.id, saved: false, checked: true });
+        setApiKey("");
+        setAiStatus("已删除该服务商的本地密钥。");
+      }
+    } catch (error) {
+      if (version === aiSettingsVersion.current) setAiStatus(String(error));
+    } finally {
+      if (version === aiSettingsVersion.current) {
+        aiSettingsRunning.current = false;
+        setAiBusy(false);
+      }
     }
   };
   return (
@@ -1706,6 +2021,47 @@ function SettingsPage() {
             }
           />
         </label>
+        <label className="setting-row">
+          <div>
+            <strong>向 AI 分享使用摘要</strong>
+            <span>
+              仅分享今日活跃分钟和未完成任务数量；每次推荐前可查看并确认
+            </span>
+          </div>
+          <input
+            type="checkbox"
+            checked={preferences.aiShareActivitySummary}
+            onChange={(event) =>
+              updatePreferences({
+                aiShareActivitySummary: event.target.checked,
+              })
+            }
+          />
+        </label>
+        <label className="setting-row">
+          <div>
+            <strong>每日 AI 请求上限</strong>
+            <span>
+              1–100 次，所有服务共用。连接测试、失败和重试计入，缓存命中不计入
+            </span>
+          </div>
+          <input
+            className="compact-input"
+            type="number"
+            min={1}
+            max={100}
+            step={1}
+            value={preferences.aiMaxDailyCalls}
+            onChange={(event) =>
+              updatePreferences({ aiMaxDailyCalls: Number(event.target.value) })
+            }
+          />
+        </label>
+        <p className="ai-usage" role="status">
+          {aiUsage
+            ? `今日已发起 ${aiUsage.calls} / ${preferences.aiMaxDailyCalls} 次请求`
+            : "今日请求次数暂时无法读取"}
+        </p>
         <div className="ai-form">
           <label>
             服务商
@@ -1724,6 +2080,7 @@ function SettingsPage() {
             Base URL
             <input
               value={preferences.aiBaseUrl}
+              disabled={aiBusy}
               onChange={(event) =>
                 updatePreferences({ aiBaseUrl: event.target.value })
               }
@@ -1734,6 +2091,7 @@ function SettingsPage() {
             模型名称
             <input
               value={preferences.aiModel}
+              disabled={aiBusy}
               onChange={(event) =>
                 updatePreferences({ aiModel: event.target.value })
               }
@@ -1757,7 +2115,7 @@ function SettingsPage() {
                 />
                 <button
                   className="button secondary"
-                  disabled={!apiKey.trim() || aiBusy}
+                  disabled={!apiKey.trim() || aiBusy || !keyChecked}
                   onClick={storeKey}
                 >
                   保存密钥
@@ -1768,7 +2126,9 @@ function SettingsPage() {
           <div className="ai-actions">
             <button
               className="button primary"
-              disabled={aiBusy || (provider.needsKey && !keySaved)}
+              disabled={
+                aiBusy || (provider.needsKey && (!keyChecked || !keySaved))
+              }
               onClick={testConnection}
             >
               测试连接
@@ -1777,11 +2137,7 @@ function SettingsPage() {
               <button
                 className="button ghost"
                 disabled={aiBusy}
-                onClick={async () => {
-                  await deleteAiKey(provider.id);
-                  setKeySaved(false);
-                  setAiStatus("已删除该服务商的本地密钥。");
-                }}
+                onClick={removeKey}
               >
                 删除密钥
               </button>
@@ -1790,35 +2146,71 @@ function SettingsPage() {
               {provider.needsKey
                 ? keySaved
                   ? "密钥已配置"
-                  : "尚未配置密钥"
+                  : keyChecked
+                    ? "尚未配置密钥"
+                    : "正在读取密钥状态…"
                 : "本机服务无需密钥"}
             </span>
           </div>
-          {aiStatus && <p className="ai-status">{aiStatus}</p>}
+          <p className="ai-test-note">
+            测试连接会向所选服务发送固定测试语句，并计入每日请求次数，不含活动或任务数据。
+          </p>
+          {aiStatus && (
+            <p className="ai-status" role="status">
+              {aiStatus}
+            </p>
+          )}
         </div>
       </section>
       <section className="settings-card">
         <h2>启动与通知</h2>
-        {(
-          [
-            ["autostart", "开机自动启动", "需要你主动开启"],
-            ["notifications", "桌面通知", "任务完成或休息时温和提醒"],
-          ] as const
-        ).map(([key, title, description]) => (
-          <label className="setting-row" key={key}>
-            <div>
-              <strong>{title}</strong>
-              <span>{description}</span>
-            </div>
-            <input
-              type="checkbox"
-              checked={preferences[key]}
-              onChange={(event) =>
-                updatePreferences({ [key]: event.target.checked })
-              }
-            />
-          </label>
-        ))}
+        <label className="setting-row">
+          <div>
+            <strong>开机自动启动</strong>
+            <span>Windows 登录后启动，开关显示系统实际状态</span>
+          </div>
+          <input
+            type="checkbox"
+            checked={systemStatus?.autostartEnabled ?? false}
+            disabled={!systemStatus || systemBusy}
+            onChange={(event) => updateAutostart(event.target.checked)}
+          />
+        </label>
+        <label className="setting-row">
+          <div>
+            <strong>桌面通知</strong>
+            <span>专注结束时温和提醒，可发送测试检查系统状态</span>
+          </div>
+          <input
+            type="checkbox"
+            checked={preferences.notifications}
+            onChange={(event) =>
+              updatePreferences({ notifications: event.target.checked })
+            }
+          />
+        </label>
+        <div className="setting-row">
+          <div>
+            <strong>系统通知状态</strong>
+            <span>
+              {desktop
+                ? (systemStatus?.notificationStatusNote ?? "正在读取系统状态…")
+                : "系统集成仅在桌面版可用"}
+            </span>
+          </div>
+          <button
+            className="button secondary"
+            disabled={!preferences.notifications || systemBusy || !systemStatus}
+            onClick={testNotification}
+          >
+            发送测试通知
+          </button>
+        </div>
+        {systemMessage && (
+          <p className="ai-status" role="status">
+            {systemMessage}
+          </p>
+        )}
         <label className="setting-row">
           <div>
             <strong>桌面浮动球</strong>
@@ -1835,7 +2227,7 @@ function SettingsPage() {
         <div className="brand-mark">日</div>
         <div>
           <strong>DayMate 日伴</strong>
-          <span>版本 0.5.0 · 本地优先桌面陪伴应用</span>
+          <span>版本 {appVersion} · 本地优先桌面陪伴应用</span>
         </div>
         <div className="about-links">
           <a
@@ -1938,7 +2330,8 @@ function CompanionBall() {
 }
 
 export default function App() {
-  const windowLabel = getCurrentWindow().label;
+  const desktop = isTauri();
+  const windowLabel = desktop ? getCurrentWindow().label : "main";
   const onboarded = useAppStore((state) => state.onboarded);
   const theme = useAppStore((state) => state.preferences.theme);
   const backgroundOffset = useAppStore(
@@ -1953,6 +2346,7 @@ export default function App() {
   const [page, setPage] = useState<Page>("today");
   const [adding, setAdding] = useState(false);
   const [focusTask, setFocusTask] = useState<Task>();
+  const startupHandled = useRef(false);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
@@ -1965,7 +2359,7 @@ export default function App() {
     root.setProperty("--primary", dailyTheme.accent);
   }, [backgroundOffset]);
   useEffect(() => {
-    if (windowLabel !== "main") return;
+    if (!desktop || windowLabel !== "main") return;
     const current = getCurrentWindow();
     const unlisten = current.onCloseRequested(async (event) => {
       event.preventDefault();
@@ -1975,13 +2369,40 @@ export default function App() {
     return () => {
       unlisten.then((dispose) => dispose()).catch(() => undefined);
     };
-  }, [floatingBall, windowLabel]);
+  }, [desktop, floatingBall, windowLabel]);
   useEffect(() => {
-    if (windowLabel !== "main") return;
-    setNativeTracking(trackActivity, trackWindowTitles, idleDetection).catch(
-      () => undefined,
-    );
-  }, [idleDetection, trackActivity, trackWindowTitles, windowLabel]);
+    if (!desktop || windowLabel !== "main") return;
+    setNativeTracking(
+      onboarded && trackActivity,
+      onboarded && trackWindowTitles,
+      idleDetection,
+    ).catch(() => undefined);
+  }, [
+    desktop,
+    idleDetection,
+    onboarded,
+    trackActivity,
+    trackWindowTitles,
+    windowLabel,
+  ]);
+  useEffect(() => {
+    if (
+      !desktop ||
+      windowLabel !== "main" ||
+      !onboarded ||
+      startupHandled.current
+    )
+      return;
+    startupHandled.current = true;
+    getSystemIntegrationStatus()
+      .then(async (status) => {
+        if (!status.autostartLaunch) return;
+        if (useAppStore.getState().preferences.floatingBall)
+          await hideMainToCompanion();
+        else await getCurrentWindow().hide();
+      })
+      .catch(() => undefined);
+  }, [desktop, onboarded, windowLabel]);
   const body = useMemo(() => {
     if (page === "today")
       return (
@@ -2033,6 +2454,8 @@ export default function App() {
         {floatingBall && (
           <button
             className="collapse-button"
+            disabled={!desktop}
+            title={desktop ? "收起为浮球" : "悬浮球仅在桌面版中可用"}
             onClick={() => hideMainToCompanion().catch(() => undefined)}
           >
             <Minimize2 size={16} />

@@ -13,11 +13,17 @@ export default tseslint.config(
   },
   {
     files: ["**/*.{ts,tsx}"],
-    languageOptions: { ecmaVersion: 2022, globals: { window: "readonly", document: "readonly", crypto: "readonly" } },
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: { window: "readonly", document: "readonly", crypto: "readonly" },
+    },
     plugins: { "react-hooks": reactHooks, "react-refresh": reactRefresh },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
+      "react-refresh/only-export-components": [
+        "warn",
+        { allowConstantExport: true },
+      ],
     },
   },
 );

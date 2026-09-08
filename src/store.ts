@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Preferences, Priority, Task } from "./types";
+import { normalizeAiDailyLimit } from "./services/aiPreferences";
 
 const defaultPreferences: Preferences = {
   nickname: "朋友",
@@ -21,6 +22,8 @@ const defaultPreferences: Preferences = {
   aiProvider: "sensenova",
   aiBaseUrl: "https://token.sensenova.cn/v1",
   aiModel: "sensenova-6.7-flash-lite",
+  aiMaxDailyCalls: 20,
+  aiShareActivitySummary: false,
 };
 
 interface AppState {
@@ -101,7 +104,15 @@ export const useAppStore = create<AppState>()(
           tasks: state.tasks.filter((task) => task.id !== id),
         })),
       updatePreferences: (next) =>
-        set((state) => ({ preferences: { ...state.preferences, ...next } })),
+        set((state) => ({
+          preferences: {
+            ...state.preferences,
+            ...next,
+            aiMaxDailyCalls: normalizeAiDailyLimit(
+              next.aiMaxDailyCalls ?? state.preferences.aiMaxDailyCalls,
+            ),
+          },
+        })),
       clearActivityData: () => undefined,
     }),
     {
@@ -111,7 +122,15 @@ export const useAppStore = create<AppState>()(
         return {
           ...current,
           ...saved,
-          preferences: { ...current.preferences, ...saved.preferences },
+          preferences: {
+            ...current.preferences,
+            ...saved.preferences,
+            aiMaxDailyCalls: normalizeAiDailyLimit(
+              saved.preferences?.aiMaxDailyCalls,
+            ),
+            aiShareActivitySummary:
+              saved.preferences?.aiShareActivitySummary === true,
+          },
         };
       },
     },

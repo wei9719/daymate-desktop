@@ -18,4 +18,8 @@ body:
     attributes: { label: 预期行为与实际行为 }
   - type: textarea
     id: logs
-    attributes: { label: 日志或截图, description: 提交前请移除用户名、路径、窗口标题和其他隐私信息。 }
+    attributes:
+      {
+        label: 日志或截图,
+        description: 提交前请移除用户名、路径、窗口标题和其他隐私信息。,
+      }

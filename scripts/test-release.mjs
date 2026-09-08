@@ -1,0 +1,106 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { validateVersions } from "./check-version.mjs";
+import { releaseNotes } from "./release-notes.mjs";
+
+const changelog = `# Changelog
+## [Unreleased]
+### Added
+- 尚未发布的功能
+## [0.6.0] - 2026-09-08
+### Added
+- 新增 AI 调用额度。
+### Changed
+- 数据库迁移：v5，增加调用次数表，保留活动记录。
+## [0.5.0] - 2026-09-07
+### Added
+- 旧版功能
+`;
+
+test("versions and exact release tag agree", () => {
+  assert.equal(
+    validateVersions(
+      { "package.json": "0.6.0", "Cargo.lock": "0.6.0" },
+      "v0.6.0",
+    ),
+    "0.6.0",
+  );
+});
+
+test("stale lockfiles, missing versions and wrong tags block a release", () => {
+  assert.throws(
+    () => validateVersions({ "package.json": "0.6.0", "Cargo.lock": "0.5.0" }),
+    /Version mismatch/,
+  );
+  assert.throws(
+    () =>
+      validateVersions({ "package.json": "0.6.0", "Cargo.lock": undefined }),
+    /no version/,
+  );
+  for (const tag of [
+    "0.6.0",
+    "v0.5.0",
+    "v0.6.0-rc.1",
+    "v0.6.0; echo invalid",
+  ]) {
+    assert.throws(
+      () => validateVersions({ "package.json": "0.6.0" }, tag),
+      /does not match/,
+    );
+  }
+});
+
+test("invalid versions and leading zeroes cannot produce release names", () => {
+  for (const version of [
+    undefined,
+    "01.2.3",
+    "1.2",
+    "v1.2.3",
+    "1.2.3\ninvalid",
+  ]) {
+    assert.throws(
+      () => validateVersions({ "package.json": version }),
+      /stable X.Y.Z/,
+    );
+  }
+});
+
+test("release notes contain only the requested version plus download instructions", () => {
+  const notes = releaseNotes(changelog.replaceAll("\n", "\r\n"), "0.6.0");
+  assert.match(notes, /新增 AI 调用额度/);
+  assert.match(notes, /数据库迁移：v5/);
+  assert.match(notes, /DayMate_0\.6\.0_x64-setup\.exe/);
+  assert.match(notes, /SHA256SUMS\.txt/);
+  assert.doesNotMatch(notes, /尚未发布的功能|旧版功能/);
+});
+
+test("missing or duplicate changelog sections fail", () => {
+  assert.throws(() => releaseNotes(changelog, "0.7.0"), /exactly one/);
+  assert.throws(
+    () =>
+      releaseNotes(
+        `${changelog}\n## [0.6.0] - 2026-09-08\n- duplicate`,
+        "0.6.0",
+      ),
+    /exactly one/,
+  );
+});
+
+test("a release needs a real date, changes and an explicit database migration statement", () => {
+  assert.throws(
+    () => releaseNotes(changelog.replace("2026-09-08", "2026-99-99"), "0.6.0"),
+    /valid YYYY-MM-DD/,
+  );
+  assert.throws(
+    () => releaseNotes(changelog.replace("2026-09-08", "2026-02-30"), "0.6.0"),
+    /valid YYYY-MM-DD/,
+  );
+  assert.throws(
+    () => releaseNotes("## [0.6.0] - 2026-09-08\n### Added\n", "0.6.0"),
+    /no release changes/,
+  );
+  assert.throws(
+    () => releaseNotes("## [0.6.0] - 2026-09-08\n- New feature\n", "0.6.0"),
+    /数据库迁移/,
+  );
+});

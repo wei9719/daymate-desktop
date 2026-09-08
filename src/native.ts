@@ -71,6 +71,7 @@ export async function testAiConnection(
   baseUrl: string,
   model: string,
   needsKey: boolean,
+  maxDailyCalls: number,
 ) {
   if (!isDesktop()) throw new Error("请在 DayMate 桌面版中测试连接");
   return invoke<string>("test_ai_connection", {
@@ -78,20 +79,38 @@ export async function testAiConnection(
     baseUrl,
     model,
     needsKey,
+    maxDailyCalls,
   });
 }
 
-export async function recommendMusicWithAi(input: {
+export interface AiMusicRequest {
   provider: string;
   baseUrl: string;
   model: string;
+  needsKey: boolean;
+  maxDailyCalls: number;
   preferredCategory: string;
-  activeMinutes: number;
-  unfinishedTasks: number;
-}) {
+  activeMinutes: number | null;
+  unfinishedTasks: number | null;
+}
+
+export interface AiMusicResponse {
+  category: string;
+  reason: string;
+  source: "ai" | "cache";
+}
+
+export interface AiUsage {
+  date: string;
+  calls: number;
+}
+
+export async function getAiUsage() {
+  if (!isDesktop()) return { date: "", calls: 0 };
+  return invoke<AiUsage>("get_ai_usage");
+}
+
+export async function recommendMusicWithAi(input: AiMusicRequest) {
   if (!isDesktop()) throw new Error("请在 DayMate 桌面版中使用 AI 推荐");
-  return invoke<{ category: string; reason: string }>(
-    "recommend_music_with_ai",
-    input,
-  );
+  return invoke<AiMusicResponse>("recommend_music_with_ai", { ...input });
 }

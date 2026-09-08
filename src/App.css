@@ -1361,6 +1361,35 @@ input:focus {
   font-size: 12px;
   color: var(--primary-dark);
 }
+.ai-preview {
+  margin: 12px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--soft);
+  font-size: 13px;
+}
+.ai-preview p,
+.ai-preview ul {
+  margin: 8px 0;
+  line-height: 1.6;
+}
+.ai-preview ul {
+  padding-left: 20px;
+}
+.ai-endpoint {
+  overflow-wrap: anywhere;
+}
+.ai-usage,
+.ai-test-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.ai-test-note {
+  grid-column: 1/-1;
+  margin: 0;
+}
 button:disabled {
   opacity: 0.48;
   cursor: not-allowed;

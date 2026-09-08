@@ -49,3 +49,18 @@ describe("music playback preferences", () => {
     expect(preferences.musicPlayMode).toBe("shuffle");
   });
 });
+
+describe("AI 请求偏好", () => {
+  it("默认不分享摘要，预算20次且限制在1至100之间", () => {
+    expect(useAppStore.getState().preferences.aiShareActivitySummary).toBe(
+      false,
+    );
+    expect(useAppStore.getState().preferences.aiMaxDailyCalls).toBe(20);
+    useAppStore.getState().updatePreferences({ aiMaxDailyCalls: 500 });
+    expect(useAppStore.getState().preferences.aiMaxDailyCalls).toBe(100);
+    useAppStore.getState().updatePreferences({ aiMaxDailyCalls: 0 });
+    expect(useAppStore.getState().preferences.aiMaxDailyCalls).toBe(1);
+    useAppStore.getState().updatePreferences({ aiMaxDailyCalls: Number.NaN });
+    expect(useAppStore.getState().preferences.aiMaxDailyCalls).toBe(20);
+  });
+});

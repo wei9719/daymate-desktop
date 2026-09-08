@@ -5,8 +5,10 @@ import react from "@vitejs/plugin-react";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(({ command }) => ({
   plugins: [react()],
+  html:
+    command === "serve" ? { cspNonce: "daymate-vite-development" } : undefined,
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

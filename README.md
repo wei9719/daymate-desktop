@@ -8,9 +8,9 @@
 
 DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是企业监控软件，也不是要求用户维护复杂清单的项目管理工具。它只想帮用户看见昨天、选出今天最值得做的一件事，并更轻松地开始。
 
-当前版本：`0.5.0`（MVP 开发版）
+当前版本：`0.6.0`（MVP 开发版）
 
-[⬇️ 直接下载 DayMate 0.5.0 Windows 安装包](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.5.0/DayMate_0.5.0_x64-setup.exe) · [查看最新版本](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md)
+[⬇️ 直接下载 DayMate 0.6.0 Windows 安装包](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.0/DayMate_0.6.0_x64-setup.exe) · [查看最新版本](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md)
 
 ## 已实现
 
@@ -27,6 +27,8 @@ DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是
 - 四首 CC0 音乐随应用离线提供，网络曲库不可用时也能播放
 - 每日舒适背景：七套柔和渐变按日期稳定轮换，也可随时手动换景
 - 多 AI 服务商设置与连接测试，包含硅基流动通义千问预设；API Key 安全保存到 Windows 凭据管理器
+- AI 发送预览、默认关闭的活动汇总分享、每日请求上限、近期结果缓存、失败本地回退
+- 系统开机启动读写与撤销、保留数据目录、专注完成提醒及测试通知
 - 隐私控制：活动记录、窗口标题、空闲检测开关和二次确认删除
 - Windows 活动采集后端：前台进程、可选窗口标题、5 分钟空闲排除、60 秒批量落库
 - SQLite 数据库：WAL、迁移记录、会话索引、今日统计查询
@@ -72,7 +74,7 @@ Rust / Tauri ├─ Windows 前台应用与空闲检测
              └─ SQLite：app_usage_sessions + migration_history
 ```
 
-关键设计说明见 [docs/architecture.md](docs/architecture.md)，隐私边界见 [PRIVACY.md](PRIVACY.md)。
+关键设计说明见 [docs/architecture.md](docs/architecture.md)，[AI 工程复查](docs/ai-development-review.md)记录截至 2026-09-08 核对的官方建议和落地选择，隐私边界见 [PRIVACY.md](PRIVACY.md)。
 
 ## 项目目录
 
@@ -114,10 +116,12 @@ Windows 构建需要 Node.js、Rust MSVC 工具链、Visual Studio C++ Build Too
 
 ```powershell
 npm run lint
+npm run format:check
 npm run typecheck
 npm run test
 npm run build
 npm run version:check
+node --test scripts/test-release.mjs
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
@@ -141,8 +145,8 @@ src-tauri/target/release/bundle/nsis/
 
 1. 把所有用户可见修改写入 `CHANGELOG.md` 的 `[Unreleased]`。
 2. 发布时移动到版本段，并同步三个版本号。
-3. 合并到 `main`，创建并推送 `vX.Y.Z` Tag。
-4. GitHub Actions 自动测试、构建并创建 Release。
+3. 合并到 `main` 并等待 CI 通过，再创建并推送 `vX.Y.Z` Tag。
+4. GitHub Actions 校验 Tag、执行同一套质量检查，从 CHANGELOG 提取说明；构建并验证安装包及 SHA256 文件后公开 Release。
 
 完整流程见 [docs/release.md](docs/release.md)。
 
@@ -161,7 +165,7 @@ src-tauri/target/release/bundle/nsis/
 
 - 当前优先支持 Windows 10/11。
 - 任务与偏好当前由 WebView 本地存储保存；活动记录使用 SQLite。后续版本会统一迁移至 SQLite。
-- 开机自启和桌面通知设置已保留 UI，正式发布前需要接入并完成 Windows 实机验证。
+- 开机自启与通知通过 Tauri 官方插件实现；Windows 勿扰模式可能隐藏通知横幅，设置页提供系统状态和测试按钮。
 - AI 自然语言总结尚未接入业务页面；v0.2.0 已完成多平台安全配置和连接基础。
 
 ## 开源协议

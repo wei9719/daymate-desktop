@@ -35,6 +35,8 @@ export interface Preferences {
   aiProvider: string;
   aiBaseUrl: string;
   aiModel: string;
+  aiMaxDailyCalls: number;
+  aiShareActivitySummary: boolean;
 }
 
 export interface DailyContent {

@@ -2,7 +2,8 @@ name: Privacy concern
 description: 报告隐私边界或数据处理问题
 body:
   - type: markdown
-    attributes: { value: "请勿公开提交个人活动明细、窗口标题、API Key 或完整日志。" }
+    attributes:
+      { value: "请勿公开提交个人活动明细、窗口标题、API Key 或完整日志。" }
   - type: textarea
     id: concern
     attributes: { label: 隐私问题概述 }

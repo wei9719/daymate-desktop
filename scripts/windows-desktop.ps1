@@ -1,5 +1,5 @@
 param(
-  [ValidateSet("dev", "build", "check", "test", "clippy")]
+  [ValidateSet("dev", "build", "check", "test", "clippy", "live-ai-test")]
   [string]$Mode = "dev"
 )
 
@@ -9,6 +9,11 @@ $workspaceRoot = Split-Path -Parent $projectRoot
 $dataRoot = Join-Path $workspaceRoot "data"
 $localCargo = Join-Path $workspaceRoot ".toolchain\cargo"
 $localRustup = Join-Path $workspaceRoot ".toolchain\rustup"
+$tempRoot = Join-Path $workspaceRoot ".cache\tmp"
+New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+$env:TEMP = $tempRoot
+$env:TMP = $tempRoot
+$env:npm_config_cache = Join-Path $workspaceRoot ".cache\npm"
 
 if (Test-Path (Join-Path $localCargo "bin\cargo.exe")) {
   $env:CARGO_HOME = $localCargo
@@ -34,8 +39,13 @@ $action = switch ($Mode) {
   "check" { "cargo check --manifest-path src-tauri\Cargo.toml" }
   "test" { "cargo test --manifest-path src-tauri\Cargo.toml" }
   "clippy" { "cargo clippy --manifest-path src-tauri\Cargo.toml -- -D warnings" }
+  "live-ai-test" { "cargo test --manifest-path src-tauri\Cargo.toml ai::tests::siliconflow_live_smoke_uses_only_opted_in_minimal_context -- --ignored --exact" }
 }
 
 $command = "call `"$vcvars`" && set `"CARGO_HOME=$env:CARGO_HOME`" && set `"RUSTUP_HOME=$env:RUSTUP_HOME`" && set `"DAYMATE_DATA_DIR=$dataRoot`" && set `"PATH=$env:Path`" && set `"LIB=$lib`" && $action"
 Push-Location $projectRoot
-try { cmd.exe /d /c $command } finally { Pop-Location }
+try {
+  cmd.exe /d /c $command
+  $buildExitCode = $LASTEXITCODE
+} finally { Pop-Location }
+exit $buildExitCode
