@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { CompanionScene, CompanionMood, Preferences } from "./types";
 
 export interface TodayStats {
   activeSeconds: number;
@@ -102,6 +103,52 @@ export interface AiMusicRequest {
   preferredCategory: string;
   activeMinutes: number | null;
   unfinishedTasks: number | null;
+  scene: CompanionScene;
+  mood: CompanionMood;
+  hour: number;
+}
+
+export interface AiEncouragementRequest {
+  provider: string;
+  baseUrl: string;
+  model: string;
+  needsKey: boolean;
+  maxDailyCalls: number;
+  scene: CompanionScene;
+  mood: CompanionMood;
+  hour: number;
+  tone: Preferences["tone"];
+}
+
+export interface AiEncouragementResponse {
+  text: string;
+  source: "ai" | "cache";
+}
+export interface AiModelList {
+  models: string[];
+  source: "live" | "cache";
+}
+
+export async function listAiModels(
+  provider: string,
+  baseUrl: string,
+  needsKey: boolean,
+  maxDailyCalls: number,
+) {
+  if (!isDesktop()) throw new Error("请在 DayMate 桌面版中获取模型");
+  return invoke<AiModelList>("list_ai_models", {
+    provider,
+    baseUrl,
+    needsKey,
+    maxDailyCalls,
+  });
+}
+
+export async function generateEncouragement(input: AiEncouragementRequest) {
+  if (!isDesktop()) throw new Error("请在 DayMate 桌面版中生成鼓励");
+  return invoke<AiEncouragementResponse>("generate_encouragement", {
+    ...input,
+  });
 }
 
 export interface AiMusicResponse {

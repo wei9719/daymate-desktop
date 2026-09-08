@@ -1331,6 +1331,44 @@ input:focus {
   font-size: 12px;
   color: var(--muted);
 }
+.ai-form > .ai-key-field {
+  grid-column: 1 / -1;
+}
+.ai-model-fetch {
+  display: flex;
+  align-items: end;
+}
+.companion-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.companion-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 13px;
+}
+.companion-controls > span,
+.encouragement-result > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.encouragement-panel {
+  margin-bottom: 24px;
+}
+.encouragement-panel .ai-actions {
+  flex-wrap: wrap;
+}
+.encouragement-result {
+  max-width: 70ch;
+  line-height: 1.8;
+}
+.encouragement-result > span {
+  display: block;
+}
 .ai-form input,
 .ai-form select {
   width: 100%;

@@ -1,7 +1,11 @@
 import type { PersistStorage } from "zustand/middleware";
 import type { Preferences, Task } from "../types";
-import { aiProviders } from "./aiProviders";
-import { normalizeAiDailyLimit } from "./aiPreferences";
+import { aiProviders, findAiProvider } from "./aiProviders";
+import {
+  aiProfileText,
+  normalizeAiDailyLimit,
+  restoreAiProfiles,
+} from "./aiPreferences";
 
 const maxStoredCharacters = 5_000_000;
 const maxTasks = 10_000;
@@ -72,6 +76,23 @@ export function restorePreferences(
   defaults: Preferences,
 ): Preferences {
   const saved = asRecord(value) ?? {};
+  const aiProvider = choice(
+    saved.aiProvider,
+    aiProviders.map((provider) => provider.id),
+    defaults.aiProvider,
+  );
+  const aiProfiles = restoreAiProfiles(
+    saved.aiProfiles,
+    restoreAiProfiles(defaults.aiProfiles),
+  );
+  aiProfiles[defaults.aiProvider] ??= {
+    baseUrl: defaults.aiBaseUrl,
+    model: defaults.aiModel,
+  };
+  const profile = aiProfiles[aiProvider] ?? findAiProvider(aiProvider);
+  const aiBaseUrl = aiProfileText(saved.aiBaseUrl, profile.baseUrl, "baseUrl");
+  const aiModel = aiProfileText(saved.aiModel, profile.model, "model");
+  aiProfiles[aiProvider] = { baseUrl: aiBaseUrl, model: aiModel };
   return {
     nickname: text(saved.nickname, defaults.nickname, 100, true),
     role: text(saved.role, defaults.role, 100),
@@ -110,13 +131,10 @@ export function restorePreferences(
         ? saved.backgroundOffset
         : defaults.backgroundOffset,
     aiEnabled: flag(saved, "aiEnabled", defaults.aiEnabled, false),
-    aiProvider: choice(
-      saved.aiProvider,
-      aiProviders.map((provider) => provider.id),
-      defaults.aiProvider,
-    ),
-    aiBaseUrl: text(saved.aiBaseUrl, defaults.aiBaseUrl, 2048, true),
-    aiModel: text(saved.aiModel, defaults.aiModel, 200, true),
+    aiProvider,
+    aiBaseUrl,
+    aiModel,
+    aiProfiles,
     aiMaxDailyCalls:
       saved.aiMaxDailyCalls === undefined
         ? defaults.aiMaxDailyCalls

@@ -6,7 +6,7 @@ describe("AI provider presets", () => {
     expect(findAiProvider("siliconflow")).toMatchObject({
       name: "硅基流动 SiliconFlow",
       baseUrl: "https://api.siliconflow.cn/v1",
-      model: "Qwen/Qwen2.5-7B-Instruct",
+      model: "Qwen/Qwen3-8B",
       needsKey: true,
     });
   });

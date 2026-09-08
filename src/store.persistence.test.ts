@@ -31,6 +31,42 @@ afterEach(() => {
 });
 
 describe("持久化数据安全恢复", () => {
+  it("恢复多平台profiles后仍可切换，后续写入只包含普通配置字段", async () => {
+    localStorage.setItem(
+      storageName,
+      JSON.stringify({
+        state: {
+          preferences: {
+            aiProvider: "custom",
+            aiProfiles: {
+              custom: {
+                baseUrl: "https://custom.example/v1",
+                model: "old-custom",
+                apiKey: "test-secret",
+              },
+              siliconflow: {
+                baseUrl: "https://api.siliconflow.cn/v1",
+                model: "Qwen/my-model",
+              },
+              unknown: {
+                baseUrl: "https://unknown.example",
+                apiKey: "test-secret",
+              },
+            },
+          },
+        },
+        version: 0,
+      }),
+    );
+    await useAppStore.persist.rehydrate();
+    expect(useAppStore.getState().preferences.aiModel).toBe("old-custom");
+    useAppStore.getState().updatePreferences({ aiProvider: "siliconflow" });
+    expect(useAppStore.getState().preferences.aiModel).toBe("Qwen/my-model");
+    useAppStore.getState().updatePreferences({ aiProvider: "custom" });
+    expect(useAppStore.getState().preferences.aiModel).toBe("old-custom");
+    expect(localStorage.getItem(storageName)).not.toContain("test-secret");
+    expect(localStorage.getItem(storageName)).not.toContain("unknown.example");
+  });
   it("不把未知字段或伪造方法合并到应用状态", async () => {
     localStorage.setItem(
       storageName,

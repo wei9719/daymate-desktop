@@ -126,6 +126,20 @@ function audiusSourceUrl(value: unknown) {
 }
 
 const maxMusicResponseBytes = 512 * 1024;
+const musicPoolLifetime = 10 * 60_000;
+const maxMusicPools = 16;
+
+class MusicRequestError extends Error {}
+
+interface AudiusCandidate extends Omit<SmartTrack, "scene" | "reason"> {
+  genre: string;
+}
+
+const musicPools = new Map<
+  string,
+  { tracks: AudiusCandidate[]; expiresAt: number }
+>();
+const pendingMusicPools = new Map<string, Promise<AudiusCandidate[]>>();
 
 async function readMusicResponse(response: Response): Promise<unknown> {
   const lengthHeader = response.headers.get("content-length");
@@ -138,7 +152,7 @@ async function readMusicResponse(response: Response): Promise<unknown> {
       declaredLength > maxMusicResponseBytes)
   ) {
     await response.body?.cancel().catch(() => undefined);
-    throw new Error("音乐服务返回的数据过大或无效，请稍后再试。");
+    throw new MusicRequestError("音乐服务返回的数据过大或无效，请稍后再试。");
   }
   let raw: string;
   const reader = response.body?.getReader?.();
@@ -151,7 +165,7 @@ async function readMusicResponse(response: Response): Promise<unknown> {
         if (chunk.done) break;
         size += chunk.value.byteLength;
         if (size > maxMusicResponseBytes)
-          throw new Error("音乐服务返回的数据过大，请稍后再试。");
+          throw new MusicRequestError("音乐服务返回的数据过大，请稍后再试。");
         chunks.push(chunk.value);
       }
       const bytes = new Uint8Array(size);
@@ -167,14 +181,16 @@ async function readMusicResponse(response: Response): Promise<unknown> {
     }
   } else {
     // A declared Content-Length is untrusted and cannot bound text() allocation.
-    throw new Error("当前浏览器无法安全读取音乐数据，可先使用离线推荐。");
+    throw new MusicRequestError(
+      "当前浏览器无法安全读取音乐数据，可先使用离线推荐。",
+    );
   }
   if (raw.length > maxMusicResponseBytes)
-    throw new Error("音乐服务返回的数据过大，请稍后再试。");
+    throw new MusicRequestError("音乐服务返回的数据过大，请稍后再试。");
   try {
     return JSON.parse(raw) as unknown;
   } catch {
-    throw new Error("音乐服务返回了无法读取的数据，请稍后再试。");
+    throw new MusicRequestError("音乐服务返回了无法读取的数据，请稍后再试。");
   }
 }
 
@@ -279,10 +295,10 @@ function categoryScene(
   return category === "smart" ? fallback : scenes[category];
 }
 
-export function parseAudiusTracks(payload: unknown, scene: MusicScene) {
+function parseAudiusCandidates(payload: unknown) {
   const data = record(payload)?.data;
   if (!Array.isArray(data)) return [];
-  const tracks: SmartTrack[] = [];
+  const tracks: AudiusCandidate[] = [];
   const ids = new Set<string>();
   for (const candidate of data.slice(0, 40)) {
     const track = record(candidate);
@@ -295,6 +311,19 @@ export function parseAudiusTracks(payload: unknown, scene: MusicScene) {
       !/^[A-Za-z0-9_-]{1,128}$/.test(id) ||
       ids.has(id) ||
       !title ||
+      // Audius documents these as hidden/deleted or access-gated tracks.
+      // https://api.audius.co/v1/swagger.yaml
+      // This anonymous player cannot satisfy purchase, follow or signature gates.
+      [track.is_stream_gated, track.is_delete, track.is_unlisted].some(
+        (flag) => flag !== undefined && flag !== false,
+      ) ||
+      (track.is_available !== undefined && track.is_available !== true) ||
+      (track.access_authorities != null &&
+        (!Array.isArray(track.access_authorities) ||
+          track.access_authorities.length > 0)) ||
+      (track.stream_conditions != null &&
+        (!record(track.stream_conditions) ||
+          Object.keys(track.stream_conditions).length > 0)) ||
       (track.is_streamable !== undefined && track.is_streamable !== true) ||
       (track.access !== undefined && !access) ||
       (access?.stream !== undefined && access.stream !== true)
@@ -306,8 +335,7 @@ export function parseAudiusTracks(payload: unknown, scene: MusicScene) {
       id: `audius-${id}`,
       title,
       artist: boundedText(record(track.user)?.name, 160) || "Audius 独立音乐人",
-      scene: scene.scene,
-      reason: `${scene.reason}${genre ? ` · ${genre}` : ""}`,
+      genre,
       // Never pass response-supplied stream URLs (including LAN targets) to audio.src.
       audioUrl: `https://api.audius.co/v1/tracks/${id}/stream`,
       sourceUrl: audiusSourceUrl(track.permalink),
@@ -318,17 +346,27 @@ export function parseAudiusTracks(payload: unknown, scene: MusicScene) {
   return tracks;
 }
 
-export async function recommendMusic(
-  offset = 0,
-  hasTasks = false,
-  hour = new Date().getHours(),
-  category: MusicCategory = "smart",
-  search = "",
-) {
-  const scene = categoryScene(category, musicScene(hour, hasTasks));
-  const query = search.trim().slice(0, 200);
+function trackForScene(
+  candidate: AudiusCandidate,
+  scene: MusicScene,
+): SmartTrack {
+  const { genre, ...track } = candidate;
+  return {
+    ...track,
+    scene: scene.scene,
+    reason: `${scene.reason}${genre ? ` · ${genre}` : ""}`,
+  };
+}
+
+export function parseAudiusTracks(payload: unknown, scene: MusicScene) {
+  return parseAudiusCandidates(payload).map((track) =>
+    trackForScene(track, scene),
+  );
+}
+
+async function fetchMusicPool(query: string) {
   const parameters = new URLSearchParams({
-    query: query || scene.query,
+    query,
     limit: "40",
   });
   const controller = new AbortController();
@@ -343,17 +381,84 @@ export async function recommendMusic(
         redirect: "error",
       },
     );
-    if (!response.ok) throw new Error(`音乐服务返回 ${response.status}`);
-    const tracks = parseAudiusTracks(await readMusicResponse(response), scene);
-    if (!tracks.length)
-      throw new Error(
-        "开放曲库没有找到这首歌；商业版权歌曲可使用下方的本地导入播放",
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new MusicRequestError(
+        "音乐服务暂时不可用，请稍后重试或导入本地音乐。",
       );
-    return tracks[recommendationIndex(offset, tracks.length)];
-  } catch (error) {
-    if (search.trim()) throw error;
-    return bundledRecommendation(category, offset);
+    }
+    const tracks = parseAudiusCandidates(await readMusicResponse(response));
+    if (!tracks.length)
+      throw new MusicRequestError(
+        "开放曲库没有找到可直接播放的歌曲；试试曲名、歌手或类别关键词，商业版权歌曲也可通过本地导入播放。",
+      );
+    return tracks;
   } finally {
     window.clearTimeout(timeout);
+  }
+}
+
+async function musicPool(query: string) {
+  const now = Date.now();
+  for (const [key, pool] of musicPools) {
+    if (pool.expiresAt <= now) musicPools.delete(key);
+  }
+  const cached = musicPools.get(query);
+  if (cached) {
+    // LRU ordering changes on a hit; the original expiry does not slide.
+    musicPools.delete(query);
+    musicPools.set(query, cached);
+    return cached.tracks;
+  }
+  const pending = pendingMusicPools.get(query);
+  if (pending) return pending;
+  if (pendingMusicPools.size >= maxMusicPools)
+    throw new MusicRequestError("音乐搜索正在处理中，请稍后再试。");
+
+  const request = fetchMusicPool(query);
+  pendingMusicPools.set(query, request);
+  try {
+    const tracks = await request;
+    musicPools.set(query, {
+      tracks,
+      expiresAt: Date.now() + musicPoolLifetime,
+    });
+    if (musicPools.size > maxMusicPools) {
+      const oldest = musicPools.keys().next().value;
+      if (oldest !== undefined) musicPools.delete(oldest);
+    }
+    return tracks;
+  } finally {
+    pendingMusicPools.delete(query);
+  }
+}
+
+export async function recommendMusic(
+  offset = 0,
+  hasTasks = false,
+  hour = new Date().getHours(),
+  category: MusicCategory = "smart",
+  search = "",
+) {
+  const scene = categoryScene(category, musicScene(hour, hasTasks));
+  const query = search.trim().slice(0, 200);
+  try {
+    const tracks = await musicPool(query || scene.query);
+    return trackForScene(
+      tracks[recommendationIndex(offset, tracks.length)],
+      scene,
+    );
+  } catch (error) {
+    if (query)
+      throw error instanceof MusicRequestError
+        ? error
+        : new MusicRequestError(
+            "音乐搜索暂时未连接成功，请稍后重试或导入本地音乐。",
+          );
+    const track = bundledRecommendation(category, offset);
+    return {
+      ...track,
+      reason: `${track.reason} 在线推荐暂时不可用，已回退到离线曲目。`,
+    };
   }
 }

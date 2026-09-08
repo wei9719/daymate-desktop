@@ -29,7 +29,8 @@ const defaultPreferences: Preferences = {
   aiEnabled: false,
   aiProvider: "sensenova",
   aiBaseUrl: "https://token.sensenova.cn/v1",
-  aiModel: "sensenova-6.7-flash-lite",
+  aiModel: "sensenova-6.8-flash-lite",
+  aiProfiles: {},
   aiMaxDailyCalls: 20,
   aiShareActivitySummary: false,
 };

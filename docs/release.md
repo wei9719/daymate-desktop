@@ -8,7 +8,7 @@
 2. 把 `CHANGELOG.md` 的 Unreleased 内容移到唯一的 `## [X.Y.Z] - YYYY-MM-DD` 小节，并保留空的 Unreleased 小节。
 3. 在本版纪要写明 `数据库迁移：无。`，或写明迁移版本、变化和已有数据的处理方式。这是发布的必填信息。
 4. 同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`，更新 `package-lock.json` 与 `src-tauri/Cargo.lock` 中的项目版本。应用关于页从项目版本读取。
-5. 在本地完成与 CI 相同的检查，再提交和推送发布准备分支。
+5. 在本地完成可执行的质量检查，再提交和推送发布准备分支；浏览器和安装测试在云端运行，必须通过后才发布。
 
 以下示例以 `0.6.1` 为例，后续发布时替换版本号：
 
@@ -63,6 +63,8 @@ git push origin v0.6.1
 质量检查分别在 Windows Server 2022/2025 执行，同时审计 npm 全依赖和完整 Cargo.lock。RustSec 报告中的全部漏洞阻断发布；unsound 警示按 Cargo 解析出的 Windows 实际依赖阻断，非 Windows 依赖与停维护警示不隐藏，详见[安全说明](security-compatibility.md)。审计命令失败、元数据缺失或存在忽略配置时门禁失败。每周另运行同一审计工作流。
 
 Release 另复用 CodeQL 工作流，构建同时依赖质量和安全检查。`scripts/check-sarif.mjs` 检查本次实际生成的报告：安全分值至少 7 或 error 级安全结果阻断，报告不完整、引用规则无效也失败。Tag 仍完整执行扫描和本地门禁，只不上传告警/查询数据库；main/PR 上传供 GitHub 告警管理。不要用扫描任务本身的绿色状态代替结果检查。
+
+0.7.0 起，CI 还复用 `ui-smoke.yml` 在 GitHub 托管 Ubuntu Chromium 验证设置与内容页。Release 将同一 UI 工作流作为独立构建前置条件，复用 CI 时跳过重复 UI job，但不跳过实际浏览器门禁。它使用虚构偏好与模拟曲库，没有 Key、真实 AI 或 Tauri IPC；测试设置恢复、浏览器原生能力提示、场景/鼓励回退及音乐与好句独立，保存截图和报告 14 天。本地只允许 `npm run test:ui -- --list` 发现测试，不下载浏览器或操作旧应用。
 
 仓库通过 `.gitattributes` 与 `.prettierrc.json` 统一使用 LF 换行，即使 Windows Git 开启 `core.autocrlf=true`，新检出的源文件也保持 LF。已有工作目录更新规则后可运行 `npx prettier --write .` 统一格式，再执行格式检查；不要通过关闭门禁解决换行差异。
 

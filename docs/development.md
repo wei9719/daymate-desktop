@@ -56,6 +56,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 AI 自动化测试只使用临时 SQLite 与本机 HTTP 服务，不需要生产 Key，不会发送个人数据。实测供应商接口应通过应用设置中的测试连接，并使用少量请求。工程决策见 [AI 工程复查](ai-development-review.md)。
 
-维护者在已保存自己的硅基流动密钥并同意实际请求后，可执行 `powershell -NoProfile -File scripts/windows-desktop.ps1 live-ai-test` 验证真实连接和结构化推荐。该显式检查最多使用 3 次请求额度，仅发送固定短句和 `focus` 类别；普通 `cargo test` 与 CI 默认跳过，不读取生产凭据。测试数据库与临时文件仍放在仓库父目录的 `.cache/tmp`。
+维护者在已保存自己的硅基流动密钥并同意实际请求后，可执行 `powershell -NoProfile -File scripts/windows-desktop.ps1 live-ai-test` 验证 Qwen3-8B 的模型目录、连接、场景音乐和独立鼓励。该显式检查最多使用 6 次请求预算，只发送固定短句与虚构场景，不启动桌面 UI；普通 `cargo test` 与 CI 默认跳过，不读取生产凭据。测试数据库与临时文件仍放在仓库父目录的 `.cache/tmp`，这份预算独立于用户日常数据库。更多说明见 [AI 配置指南](ai-setup.md)和[实测记录](ai-verification.md)。
+
+浏览器截图与交互测试使用精确锁定的 Playwright，仅在 GitHub 托管 Linux 工作流执行 `npm run test:ui`；不要在用户电脑下载浏览器或伪造环境变量绕过 cloud-only 守卫。本地可用 `npm run test:ui -- --list` 检查测试发现，它不会启动浏览器。测试从虚构偏好启动，音乐接口固定为明确的测试样例，不注入 Tauri 内部对象或生产 Key；结果不能代替原生 IPC 和真实流媒体验证。CI/Release 会保存设置、每日内容截图和失败证据。
 
 `--daymate-data-dir-base64=` 是应用注册开机启动时生成的内部参数，用于保留含空格或中文的数据目录。一般开发时使用 `DAYMATE_DATA_DIR` 即可。为其他主机配置 `TAURI_DEV_HOST` 时，需要在 `devCsp` 中添加对应的开发 WebSocket 地址；生产策略不受影响。

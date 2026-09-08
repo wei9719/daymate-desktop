@@ -6,11 +6,20 @@ on:
   pull_request:
     branches: [main]
   workflow_call:
+    inputs:
+      skip-ui:
+        description: Release runs the same browser gate as a separate prerequisite.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  ui-smoke:
+    if: ${{ !inputs.skip-ui }}
+    uses: ./.github/workflows/ui-smoke.yml
+
   dependency-audit:
     uses: ./.github/workflows/dependency-audit.yml
 

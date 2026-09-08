@@ -11,7 +11,7 @@ export const aiProviders: AiProvider[] = [
     id: "sensenova",
     name: "商汤日日新 SenseNova",
     baseUrl: "https://token.sensenova.cn/v1",
-    model: "sensenova-6.7-flash-lite",
+    model: "sensenova-6.8-flash-lite",
     needsKey: true,
   },
   {
@@ -39,7 +39,7 @@ export const aiProviders: AiProvider[] = [
     id: "siliconflow",
     name: "硅基流动 SiliconFlow",
     baseUrl: "https://api.siliconflow.cn/v1",
-    model: "Qwen/Qwen2.5-7B-Instruct",
+    model: "Qwen/Qwen3-8B",
     needsKey: true,
   },
   {

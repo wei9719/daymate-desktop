@@ -20,6 +20,8 @@
     "allow-delete-ai-key",
     "allow-test-ai-connection",
     "allow-recommend-music-with-ai",
+    "allow-list-ai-models",
+    "allow-generate-encouragement",
     "allow-get-ai-usage",
     "allow-get-system-integration-status",
     "allow-set-system-autostart",

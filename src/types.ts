@@ -3,6 +3,13 @@ export type Page =
 
 export type Priority = "high" | "medium" | "low";
 export type MusicPlayMode = "sequence" | "shuffle" | "single";
+export type CompanionScene =
+  "auto" | "start" | "focus" | "relax" | "rest" | "sleep";
+export type CompanionMood = "neutral" | "low" | "tense" | "tired" | "good";
+export interface AiProfile {
+  baseUrl: string;
+  model: string;
+}
 
 export interface Task {
   id: string;
@@ -35,6 +42,7 @@ export interface Preferences {
   aiProvider: string;
   aiBaseUrl: string;
   aiModel: string;
+  aiProfiles: Record<string, AiProfile>;
   aiMaxDailyCalls: number;
   aiShareActivitySummary: boolean;
 }

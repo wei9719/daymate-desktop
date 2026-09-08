@@ -59,9 +59,24 @@ import { getDailyTheme } from "./services/dailyTheme";
 import { aiProviders, findAiProvider } from "./services/aiProviders";
 import {
   matchesAiMusicPreferences,
+  matchesEncouragementPreferences,
+  prepareEncouragementRequest,
   prepareAiMusicRequest,
+  resolveEncouragement,
   resolveAiMusicRecommendation,
 } from "./services/aiRecommendation";
+import {
+  companionScenes,
+  companionMoods,
+  companionTones,
+  currentCompanionContext,
+} from "./services/companionContext";
+import {
+  filterAiModels,
+  isImageGenerationModel,
+  normalizeAiModels,
+} from "./services/aiModels";
+import { aiProfileText } from "./services/aiPreferences";
 import {
   getSystemIntegrationStatus,
   setSystemAutostart,
@@ -77,6 +92,8 @@ import {
   getAiUsage,
   getTodayStats,
   getAiKeyStatus,
+  listAiModels,
+  generateEncouragement,
   recommendMusicWithAi,
   saveAiKey,
   setNativeTracking,
@@ -85,8 +102,16 @@ import {
   type TodayStats,
   type AiMusicRequest,
   type AiUsage,
+  type AiModelList,
+  type AiEncouragementRequest,
 } from "./native";
-import type { Page, Priority, Task } from "./types";
+import type {
+  Page,
+  Priority,
+  Task,
+  CompanionScene,
+  CompanionMood,
+} from "./types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit, listen } from "@tauri-apps/api/event";
 import {
@@ -1323,6 +1348,17 @@ export function ContentPage() {
   const [musicOffset, setMusicOffset] = useState(0);
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
+  const [scene, setScene] = useState<CompanionScene>("auto");
+  const [mood, setMood] = useState<CompanionMood>("neutral");
+  const [sessionMusicCategory, setSessionMusicCategory] =
+    useState<MusicCategory>();
+  const [pendingEncouragement, setPendingEncouragement] =
+    useState<AiEncouragementRequest>();
+  const [encouragement, setEncouragement] =
+    useState<Awaited<ReturnType<typeof resolveEncouragement>>>();
+  const [encouragementBusy, setEncouragementBusy] = useState(false);
+  const encouragementRunning = useRef(false);
+  const encouragementVersion = useRef(0);
   const [localTrack, setLocalTrack] = useState<{ name: string; url: string }>();
   const [localAudioError, setLocalAudioError] = useState("");
   const [localAudioBusy, setLocalAudioBusy] = useState(false);
@@ -1334,15 +1370,72 @@ export function ContentPage() {
   const aiMusicRequestVersion = useRef(0);
   const { preferences, updatePreferences } = useAppStore();
   const content = getDailyContent(contentOffset);
+  const context = currentCompanionContext(scene, mood);
+  const playingCategory = sessionMusicCategory ?? preferences.musicCategory;
+  const aiTextReady =
+    preferences.aiEnabled &&
+    Boolean(preferences.aiModel.trim()) &&
+    !isImageGenerationModel(preferences.aiModel);
+  const encouragementPreview =
+    pendingEncouragement &&
+    matchesEncouragementPreferences(pendingEncouragement, preferences, context)
+      ? pendingEncouragement
+      : undefined;
   const preview =
-    pendingAiRequest && matchesAiMusicPreferences(pendingAiRequest, preferences)
+    pendingAiRequest &&
+    matchesAiMusicPreferences(pendingAiRequest, preferences, context)
       ? pendingAiRequest
       : undefined;
   useEffect(
     () => () => {
       aiMusicRequestVersion.current += 1;
+      encouragementVersion.current += 1;
     },
     [],
+  );
+  const discardMusicResults = useCallback(() => {
+    aiMusicRequestVersion.current += 1;
+    setPendingAiRequest(undefined);
+    setAiMusicStatus("");
+  }, []);
+  const discardEncouragementResults = useCallback(() => {
+    encouragementVersion.current += 1;
+    setPendingEncouragement(undefined);
+    setEncouragement(undefined);
+  }, []);
+  const discardAiResults = useCallback(() => {
+    discardMusicResults();
+    discardEncouragementResults();
+  }, [discardMusicResults, discardEncouragementResults]);
+  useEffect(
+    () =>
+      useAppStore.subscribe((state, previous) => {
+        const keys = [
+          "aiEnabled",
+          "aiProvider",
+          "aiBaseUrl",
+          "aiModel",
+          "aiMaxDailyCalls",
+        ] as const;
+        if (
+          keys.some(
+            (key) => state.preferences[key] !== previous.preferences[key],
+          )
+        ) {
+          discardAiResults();
+        } else {
+          if (
+            state.preferences.musicCategory !==
+              previous.preferences.musicCategory ||
+            state.preferences.aiShareActivitySummary !==
+              previous.preferences.aiShareActivitySummary
+          )
+            discardMusicResults();
+          if (state.preferences.tone !== previous.preferences.tone)
+            discardEncouragementResults();
+        }
+      }),
+    [discardAiResults, discardMusicResults, discardEncouragementResults],
   );
   useEffect(
     () => () => {
@@ -1379,13 +1472,20 @@ export function ContentPage() {
     }
   };
   const chooseCategory = (category: MusicCategory) => {
+    discardMusicResults();
+    setSessionMusicCategory(undefined);
     updatePreferences({ musicCategory: category });
     setSearch("");
     setSearchDraft("");
     setMusicOffset((value) => value + 1);
   };
   const previewAiMusic = async () => {
-    if (aiMusicRequestRunning.current || !preferences.aiEnabled) return;
+    if (
+      aiMusicRequestRunning.current ||
+      encouragementRunning.current ||
+      !preferences.aiEnabled
+    )
+      return;
     aiMusicRequestRunning.current = true;
     const requestVersion = ++aiMusicRequestVersion.current;
     setAiMusicBusy(true);
@@ -1396,10 +1496,15 @@ export function ContentPage() {
         async () => (await getTodayStats()).activeSeconds,
         () =>
           useAppStore.getState().tasks.filter((task) => !task.completed).length,
+        context,
       );
       if (
         requestVersion === aiMusicRequestVersion.current &&
-        matchesAiMusicPreferences(request, useAppStore.getState().preferences)
+        matchesAiMusicPreferences(
+          request,
+          useAppStore.getState().preferences,
+          currentCompanionContext(scene, mood),
+        )
       ) {
         setPendingAiRequest(request);
       }
@@ -1411,12 +1516,16 @@ export function ContentPage() {
       }
     } finally {
       aiMusicRequestRunning.current = false;
-      if (requestVersion === aiMusicRequestVersion.current)
-        setAiMusicBusy(false);
+      setAiMusicBusy(false);
     }
   };
   const askAiForMusic = async () => {
-    if (!preview || aiMusicRequestRunning.current) return;
+    if (
+      !preview ||
+      aiMusicRequestRunning.current ||
+      encouragementRunning.current
+    )
+      return;
     aiMusicRequestRunning.current = true;
     const requestVersion = ++aiMusicRequestVersion.current;
     const request = preview;
@@ -1430,20 +1539,55 @@ export function ContentPage() {
       );
       if (requestVersion !== aiMusicRequestVersion.current) return;
       if (
-        !matchesAiMusicPreferences(request, useAppStore.getState().preferences)
+        !matchesAiMusicPreferences(
+          request,
+          useAppStore.getState().preferences,
+          currentCompanionContext(scene, mood),
+        )
       ) {
         setAiMusicStatus("设置或音乐偏好已改变，本次结果未应用，请重新推荐。");
         return;
       }
-      chooseCategory(suggestion.category);
+      setSessionMusicCategory(suggestion.category);
+      setSearch("");
+      setSearchDraft("");
+      setMusicOffset((value) => value + 1);
       const source = { ai: "AI 推荐", cache: "近期缓存", local: "本地推荐" }[
         suggestion.source
       ];
       setAiMusicStatus(`${source} · ${suggestion.reason}`);
     } finally {
       aiMusicRequestRunning.current = false;
-      if (requestVersion === aiMusicRequestVersion.current)
-        setAiMusicBusy(false);
+      setAiMusicBusy(false);
+    }
+  };
+  const askForEncouragement = async () => {
+    if (
+      !encouragementPreview ||
+      encouragementRunning.current ||
+      aiMusicRequestRunning.current
+    )
+      return;
+    const request = encouragementPreview;
+    const version = ++encouragementVersion.current;
+    encouragementRunning.current = true;
+    setEncouragementBusy(true);
+    setPendingEncouragement(undefined);
+    try {
+      const result = await resolveEncouragement(request, generateEncouragement);
+      if (
+        version === encouragementVersion.current &&
+        matchesEncouragementPreferences(
+          request,
+          useAppStore.getState().preferences,
+          currentCompanionContext(scene, mood),
+        )
+      ) {
+        setEncouragement(result);
+      }
+    } finally {
+      encouragementRunning.current = false;
+      setEncouragementBusy(false);
     }
   };
   return (
@@ -1462,6 +1606,127 @@ export function ContentPage() {
           换一组
         </button>
       </header>
+      <section className="companion-controls" aria-label="本次陪伴场景">
+        <label>
+          当前场景
+          <select
+            value={scene}
+            onChange={(event) => {
+              discardAiResults();
+              setScene(event.target.value as CompanionScene);
+            }}
+          >
+            {companionScenes.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          此刻心情
+          <select
+            value={mood}
+            onChange={(event) => {
+              discardAiResults();
+              setMood(event.target.value as CompanionMood);
+            }}
+          >
+            {companionMoods.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span>由你选择，只用于本次陪伴，不会替你判断心情。</span>
+      </section>
+      <section className="encouragement-panel" aria-label="一句鼓励">
+        <div className="ai-actions">
+          <button
+            className="button secondary"
+            disabled={!aiTextReady || encouragementBusy || aiMusicBusy}
+            onClick={() => {
+              setPendingEncouragement(
+                prepareEncouragementRequest(preferences, context),
+              );
+            }}
+          >
+            <Heart />
+            {encouragementBusy ? "正在想一句话…" : "给我一句鼓励"}
+          </button>
+          <span>独立生成，不改变每日好句和正在播放的音乐。</span>
+        </div>
+        {preferences.aiEnabled && !aiTextReady && (
+          <p className="ai-test-note">
+            请先在设置中选择文本聊天模型；图像生成模型不用于音乐推荐或一句鼓励。
+          </p>
+        )}
+        {encouragementPreview && (
+          <section className="ai-preview" aria-label="鼓励发送预览">
+            <strong>确认鼓励发送内容</strong>
+            <p>
+              {findAiProvider(encouragementPreview.provider).name} ·{" "}
+              {encouragementPreview.model}
+            </p>
+            <p className="ai-endpoint">
+              接收地址：{encouragementPreview.baseUrl}
+            </p>
+            <ul>
+              <li>
+                场景：
+                {
+                  companionScenes.find(
+                    (item) => item.id === encouragementPreview.scene,
+                  )?.label
+                }
+              </li>
+              <li>
+                心情：
+                {
+                  companionMoods.find(
+                    (item) => item.id === encouragementPreview.mood,
+                  )?.label
+                }
+              </li>
+              <li>本地时段：{encouragementPreview.hour} 点</li>
+              <li>陪伴语气：{companionTones[encouragementPreview.tone]}</li>
+            </ul>
+            <p>
+              仅发送以上四项，不读取或发送任务、应用名称、活动统计和窗口标题。确认后访问所选服务；请求共享每日{" "}
+              {encouragementPreview.maxDailyCalls} 次上限，近期缓存不计入。
+            </p>
+            <p>生成文本可能按服务商定价收费，本机次数上限不是账单限额。</p>
+            <div className="ai-actions">
+              <button
+                className="button primary"
+                disabled={encouragementBusy || aiMusicBusy}
+                onClick={askForEncouragement}
+              >
+                确认生成鼓励
+              </button>
+              <button
+                className="button ghost"
+                onClick={() => setPendingEncouragement(undefined)}
+              >
+                取消鼓励
+              </button>
+            </div>
+          </section>
+        )}
+        {encouragement && (
+          <p className="encouragement-result" role="status">
+            <span>
+              {
+                { ai: "AI 鼓励", cache: "近期缓存", local: "本地鼓励" }[
+                  encouragement.source
+                ]
+              }
+            </span>
+            {encouragement.text}
+          </p>
+        )}
+      </section>
       <section className="content-grid">
         <article className="content-card quote">
           <BookOpen />
@@ -1476,6 +1741,7 @@ export function ContentPage() {
             className="music-search"
             onSubmit={(event) => {
               event.preventDefault();
+              discardMusicResults();
               setSearch(searchDraft.trim());
               setMusicOffset((value) => value + 1);
             }}
@@ -1495,9 +1761,7 @@ export function ContentPage() {
                 type="button"
                 key={item.id}
                 className={
-                  preferences.musicCategory === item.id && !search
-                    ? "active"
-                    : ""
+                  playingCategory === item.id && !search ? "active" : ""
                 }
                 onClick={() => chooseCategory(item.id)}
               >
@@ -1509,7 +1773,7 @@ export function ContentPage() {
             <button
               className="button secondary"
               type="button"
-              disabled={!preferences.aiEnabled || aiMusicBusy}
+              disabled={!aiTextReady || aiMusicBusy || encouragementBusy}
               onClick={previewAiMusic}
             >
               <Sparkles /> AI 按今日节奏推荐
@@ -1524,6 +1788,21 @@ export function ContentPage() {
               </p>
               <p className="ai-endpoint">接收地址：{preview.baseUrl}</p>
               <ul>
+                <li>
+                  场景：
+                  {
+                    companionScenes.find((item) => item.id === preview.scene)
+                      ?.label
+                  }
+                </li>
+                <li>
+                  心情：
+                  {
+                    companionMoods.find((item) => item.id === preview.mood)
+                      ?.label
+                  }
+                </li>
+                <li>本地时段：{preview.hour} 点</li>
                 <li>
                   音乐偏好：
                   {
@@ -1550,10 +1829,11 @@ export function ContentPage() {
                 次请求，测试连接和重试也计入。相同内容的推荐缓存 15
                 分钟，命中缓存时不发起新请求。
               </p>
+              <p>生成文本可能按服务商定价收费，本机次数上限不是账单限额。</p>
               <div className="ai-actions">
                 <button
                   className="button primary"
-                  disabled={aiMusicBusy}
+                  disabled={aiMusicBusy || encouragementBusy}
                   onClick={askAiForMusic}
                 >
                   确认推荐
@@ -1587,7 +1867,7 @@ export function ContentPage() {
           )}
           <SmartMusicPlayer
             baseOffset={musicOffset}
-            category={preferences.musicCategory}
+            category={playingCategory}
             search={search}
           />
           <div className="local-music">
@@ -1767,6 +2047,12 @@ export function SettingsPage() {
   const [aiStatus, setAiStatus] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiUsage, setAiUsage] = useState<AiUsage>();
+  const [modelList, setModelList] = useState<
+    AiModelList & { provider: string; baseUrl: string }
+  >();
+  const [modelQuery, setModelQuery] = useState("");
+  const [modelsBusy, setModelsBusy] = useState(false);
+  const [modelStatus, setModelStatus] = useState("");
   const aiSettingsVersion = useRef(0);
   const aiSettingsRunning = useRef(false);
   const [systemStatus, setSystemStatus] =
@@ -1782,6 +2068,15 @@ export function SettingsPage() {
   const keySaved = currentKeyState && keyState.saved;
   const keyUsable = currentKeyState && keyState.usable;
   const keyChecked = currentKeyState && keyState.checked;
+  const currentModelList =
+    modelList?.provider === provider.id &&
+    modelList.baseUrl === preferences.aiBaseUrl
+      ? modelList
+      : undefined;
+  const visibleModels = filterAiModels(
+    currentModelList?.models ?? [],
+    modelQuery,
+  );
   useEffect(() => {
     const version = ++aiSettingsVersion.current;
     getAiKeyStatus(preferences.aiProvider, preferences.aiBaseUrl)
@@ -1887,23 +2182,71 @@ export function SettingsPage() {
   };
   const selectProvider = (id: string) => {
     const next = findAiProvider(id);
+    const profile = preferences.aiProfiles[next.id] ?? next;
     aiSettingsVersion.current += 1;
     aiSettingsRunning.current = false;
     setAiBusy(false);
     setApiKey("");
     setAiStatus("");
+    setModelList(undefined);
+    setModelStatus("");
+    setModelQuery("");
+    setModelsBusy(false);
     setKeyState({
       provider: next.id,
-      baseUrl: next.baseUrl,
+      baseUrl: profile.baseUrl,
       saved: false,
       usable: false,
       checked: false,
     });
     updatePreferences({
       aiProvider: next.id,
-      aiBaseUrl: next.baseUrl,
-      aiModel: next.model,
     });
+  };
+  const fetchModels = async () => {
+    if (
+      aiSettingsRunning.current ||
+      (provider.needsKey && (!keyChecked || !keyUsable))
+    )
+      return;
+    aiSettingsRunning.current = true;
+    const version = ++aiSettingsVersion.current;
+    setAiBusy(true);
+    setModelsBusy(true);
+    setModelStatus("");
+    try {
+      const result = normalizeAiModels(
+        await listAiModels(
+          provider.id,
+          preferences.aiBaseUrl,
+          provider.needsKey,
+          preferences.aiMaxDailyCalls,
+        ),
+      );
+      if (version !== aiSettingsVersion.current) return;
+      setModelList({
+        ...result,
+        provider: provider.id,
+        baseUrl: preferences.aiBaseUrl,
+      });
+      setModelQuery("");
+      setModelStatus(
+        result.models.length
+          ? `${result.source === "cache" ? "近期缓存" : "已获取"}：${result.models.length} 个模型。请选择聊天模型，不会自动替你更改或调用。`
+          : "这个接口未返回模型目录，可以继续手动填写聊天模型名称。",
+      );
+    } catch (error) {
+      if (version === aiSettingsVersion.current)
+        setModelStatus(`${String(error)} 可手动填写模型名称后测试连接。`);
+    } finally {
+      const usage = await getAiUsage().catch(() => undefined);
+      if (version === aiSettingsVersion.current) {
+        if (usage) setAiUsage(usage);
+        aiSettingsRunning.current = false;
+        setAiBusy(false);
+        setModelsBusy(false);
+      }
+    }
   };
   const storeKey = async () => {
     if (aiSettingsRunning.current || !apiKey.trim()) return;
@@ -1922,6 +2265,8 @@ export function SettingsPage() {
         checked: true,
       });
       setApiKey("");
+      setModelList(undefined);
+      setModelStatus("");
       setAiStatus(
         "API Key 已安全保存到 Windows 凭据管理器，并绑定当前接口地址。",
       );
@@ -1977,6 +2322,8 @@ export function SettingsPage() {
           checked: true,
         });
         setApiKey("");
+        setModelList(undefined);
+        setModelStatus("");
         setAiStatus("已删除该服务商的本地密钥。");
       }
     } catch (error) {
@@ -2078,8 +2425,28 @@ export function SettingsPage() {
         </label>
         <label className="setting-row">
           <div>
+            <strong>陪伴语气</strong>
+            <span>用于独立生成的一句鼓励</span>
+          </div>
+          <select
+            value={preferences.tone}
+            onChange={(event) =>
+              updatePreferences({
+                tone: event.target.value as typeof preferences.tone,
+              })
+            }
+          >
+            {Object.entries(companionTones).map(([id, label]) => (
+              <option key={id} value={id}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="setting-row">
+          <div>
             <strong>智能音乐源</strong>
-            <span>开放授权曲库，应用内直接播放</span>
+            <span>平台允许流播的曲目 + CC0 离线曲库，应用内直接播放</span>
           </div>
           <strong className="setting-value">Audius + CC0 离线曲库</strong>
         </label>
@@ -2120,7 +2487,8 @@ export function SettingsPage() {
           <div>
             <strong>每日 AI 请求上限</strong>
             <span>
-              1–100 次，所有服务共用。连接测试、失败和重试计入，缓存命中不计入
+              1–100
+              次，所有服务共用。获取模型、连接测试、失败和重试计入，缓存命中不计入
             </span>
           </div>
           <input
@@ -2160,25 +2528,40 @@ export function SettingsPage() {
               value={preferences.aiBaseUrl}
               maxLength={2048}
               disabled={aiBusy}
-              onChange={(event) =>
-                updatePreferences({ aiBaseUrl: event.target.value })
-              }
+              onChange={(event) => {
+                const nextUrl = aiProfileText(
+                  event.target.value,
+                  preferences.aiBaseUrl,
+                  "baseUrl",
+                );
+                if (nextUrl !== event.target.value.trim()) {
+                  setAiStatus(
+                    "接口地址不能包含密钥、用户名密码、查询参数或片段，请只填写服务商的基础地址。",
+                  );
+                  return;
+                }
+                if (nextUrl === preferences.aiBaseUrl) return;
+                aiSettingsVersion.current += 1;
+                setApiKey("");
+                setModelList(undefined);
+                setModelStatus("");
+                updatePreferences({ aiBaseUrl: nextUrl });
+              }}
               placeholder="https://example.com/v1"
             />
           </label>
-          <label>
-            模型名称
-            <input
-              value={preferences.aiModel}
-              disabled={aiBusy}
-              onChange={(event) =>
-                updatePreferences({ aiModel: event.target.value })
-              }
-              placeholder="模型名称"
-            />
-          </label>
+          <p className="ai-test-note">
+            每个服务商分别记住接口地址和模型名称；切换回来无需重填，密钥始终独立保存在系统凭据中。
+          </p>
+          {(provider.id === "siliconflow" || provider.id === "zhipu") && (
+            <p className="ai-test-note">
+              硅基流动上的 GLM
+              是该平台托管的模型，不等于智谱官方服务；请使用所选平台签发的 API
+              Key，不能互用。
+            </p>
+          )}
           {provider.needsKey && (
-            <label>
+            <label className="ai-key-field">
               API Key
               <div className="key-input">
                 <input
@@ -2210,11 +2593,108 @@ export function SettingsPage() {
               修改接口地址后需重新输入并保存密钥，已有密钥不会自动转发到新地址。
             </p>
           )}
+          <label className="ai-model-input">
+            模型名称
+            <input
+              value={preferences.aiModel}
+              disabled={aiBusy}
+              maxLength={200}
+              onChange={(event) => {
+                setAiStatus("");
+                updatePreferences({ aiModel: event.target.value });
+              }}
+              placeholder="可手动填写聊天模型名称"
+            />
+          </label>
+          <div className="ai-model-fetch">
+            <button
+              className="button secondary"
+              disabled={
+                aiBusy ||
+                !preferences.aiBaseUrl.trim() ||
+                (provider.needsKey && (!keyChecked || !keyUsable))
+              }
+              onClick={fetchModels}
+            >
+              {modelsBusy ? "正在获取模型…" : "获取模型"}
+            </button>
+          </div>
+          <p className="ai-test-note">
+            点击才获取模型目录，不发送聊天内容，计入本机请求次数。不自动选择模型；目录可见不代表免费或已开通权限，实际价格和访问权限以该平台为准。
+          </p>
+          <p className="ai-test-note">
+            请选择文本聊天模型。图像生成模型不能用于音乐类别推荐或鼓励；
+            {provider.id === "sensenova"
+              ? "例如 sensenova-6.8-flash-lite 是文本模型，sensenova-u1 系列用于图像。"
+              : "无法识别或不支持目录的接口仍可手动填写后测试。"}
+          </p>
+          {currentModelList && currentModelList.models.length > 0 && (
+            <>
+              <label>
+                筛选模型
+                <input
+                  value={modelQuery}
+                  maxLength={200}
+                  onChange={(event) => setModelQuery(event.target.value)}
+                  placeholder="输入模型名称的一部分"
+                />
+              </label>
+              <label>
+                选择目录模型
+                <select
+                  value=""
+                  disabled={aiBusy}
+                  onChange={(event) => {
+                    const selected = event.target.value;
+                    if (
+                      currentModelList.models.includes(selected) &&
+                      !isImageGenerationModel(selected)
+                    ) {
+                      setAiStatus("");
+                      updatePreferences({ aiModel: selected });
+                    }
+                  }}
+                >
+                  <option value="">
+                    {visibleModels.length
+                      ? `找到 ${visibleModels.length} 个，请手动选择`
+                      : "没有匹配的模型，请调整筛选"}
+                  </option>
+                  {visibleModels.map((model) => (
+                    <option
+                      key={model}
+                      value={model}
+                      disabled={isImageGenerationModel(model)}
+                    >
+                      {model}
+                      {isImageGenerationModel(model)
+                        ? "（图像生成，不用于聊天）"
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+          {modelStatus && (
+            <p className="ai-status" role="status">
+              {modelStatus}
+            </p>
+          )}
+          {isImageGenerationModel(preferences.aiModel) && (
+            <p className="ai-status" role="alert">
+              当前名称属于图像生成模型，请改为文本聊天模型后再测试或使用 AI
+              陪伴。
+            </p>
+          )}
           <div className="ai-actions">
             <button
               className="button primary"
               disabled={
-                aiBusy || (provider.needsKey && (!keyChecked || !keyUsable))
+                aiBusy ||
+                !preferences.aiModel.trim() ||
+                isImageGenerationModel(preferences.aiModel) ||
+                (provider.needsKey && (!keyChecked || !keyUsable))
               }
               onClick={testConnection}
             >
@@ -2243,6 +2723,7 @@ export function SettingsPage() {
           </div>
           <p className="ai-test-note">
             测试连接会向所选服务发送固定测试语句，并计入每日请求次数，不含活动或任务数据。
+            文本调用可能按服务商定价收费，本机次数上限不是账单限额。
           </p>
           {aiStatus && (
             <p className="ai-status" role="status">

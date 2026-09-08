@@ -11,6 +11,8 @@ fn main() {
             "delete_ai_key",
             "test_ai_connection",
             "recommend_music_with_ai",
+            "list_ai_models",
+            "generate_encouragement",
             "get_ai_usage",
             "get_system_integration_status",
             "set_system_autostart",

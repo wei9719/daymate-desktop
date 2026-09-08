@@ -878,6 +878,9 @@ async fn recommend_music_with_ai(
     base_url: String,
     model: String,
     preferred_category: String,
+    scene: String,
+    mood: String,
+    hour: u8,
     active_minutes: Option<i64>,
     unfinished_tasks: Option<usize>,
     needs_key: bool,
@@ -897,6 +900,9 @@ async fn recommend_music_with_ai(
             },
             ai::MusicContext {
                 preferred_category,
+                scene,
+                mood,
+                hour,
                 active_minutes,
                 unfinished_tasks,
             },
@@ -904,6 +910,70 @@ async fn recommend_music_with_ai(
     })
     .await
     .map_err(|_| "AI 请求未能完成，请稍后重试".to_string())?
+}
+
+#[tauri::command]
+async fn list_ai_models(
+    state: State<'_, AppState>,
+    provider: String,
+    base_url: String,
+    needs_key: bool,
+    max_daily_calls: u32,
+) -> Result<ai::ModelCatalog, String> {
+    let path = state.database_path.clone();
+    let runtime = state.ai.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime.list_models(
+            &path,
+            ai::AiConfig {
+                provider,
+                base_url,
+                model: String::new(),
+                needs_key,
+                max_daily_calls,
+            },
+        )
+    })
+    .await
+    .map_err(|_| "模型目录请求未能完成，请稍后重试".to_string())?
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn generate_encouragement(
+    state: State<'_, AppState>,
+    provider: String,
+    base_url: String,
+    model: String,
+    needs_key: bool,
+    max_daily_calls: u32,
+    scene: String,
+    mood: String,
+    hour: u8,
+    tone: String,
+) -> Result<ai::Encouragement, String> {
+    let path = state.database_path.clone();
+    let runtime = state.ai.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime.encourage(
+            &path,
+            ai::AiConfig {
+                provider,
+                base_url,
+                model,
+                needs_key,
+                max_daily_calls,
+            },
+            ai::EncouragementContext {
+                scene,
+                mood,
+                hour,
+                tone,
+            },
+        )
+    })
+    .await
+    .map_err(|_| "AI 鼓励未能完成，已保留本地文案".to_string())?
 }
 
 #[tauri::command]
@@ -999,6 +1069,8 @@ pub fn run() {
             delete_ai_key,
             test_ai_connection,
             recommend_music_with_ai,
+            list_ai_models,
+            generate_encouragement,
             get_ai_usage,
             system::get_system_integration_status,
             system::set_system_autostart,
@@ -1129,6 +1201,8 @@ mod tests {
             "allow-save-ai-key",
             "allow-get-ai-key-status",
             "allow-delete-ai-key",
+            "allow-list-ai-models",
+            "allow-generate-encouragement",
             "allow-get-today-stats",
             "allow-delete-activity-data",
             "allow-set-system-autostart",

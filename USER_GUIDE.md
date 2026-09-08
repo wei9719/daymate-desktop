@@ -4,10 +4,10 @@
 
 ## 立即下载
 
-[⬇️ **直接下载 DayMate 0.6.1 Windows 安装包（64 位）**](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.1/DayMate_0.6.1_x64-setup.exe)
+[⬇️ **直接下载 DayMate 0.7.0 Windows 安装包（64 位）**](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.7.0/DayMate_0.7.0_x64-setup.exe)
 
 - [查看最新版本与更新说明](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest)
-- [下载 SHA256 校验文件](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.1/SHA256SUMS.txt)
+- [下载 SHA256 校验文件](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.7.0/SHA256SUMS.txt)
 - 当前支持：Windows 10 / Windows 11，64 位
 - GitHub 账号：不需要
 - AI API Key：不需要；只有 AI 增强功能需要自行配置
@@ -16,7 +16,7 @@
 
 ## 1. 安装 DayMate
 
-1. 点击上方“直接下载”，保存 `DayMate_0.6.1_x64-setup.exe`。
+1. 点击上方“直接下载”，保存 `DayMate_0.7.0_x64-setup.exe`。
 2. 双击安装包，按照安装向导完成安装。
 3. 从桌面快捷方式或开始菜单打开“DayMate 日伴”。
 4. 第一次启动时完成昵称、身份、陪伴语气、隐私权限和首个任务设置。
@@ -28,7 +28,7 @@ Windows 可能因为应用仍处于早期发布阶段而显示 SmartScreen 提�
 在安装包所在文件夹打开 PowerShell，执行：
 
 ```powershell
-Get-FileHash .\DayMate_0.6.1_x64-setup.exe -Algorithm SHA256
+Get-FileHash .\DayMate_0.7.0_x64-setup.exe -Algorithm SHA256
 ```
 
 将输出结果与 `SHA256SUMS.txt` 中对应文件的值比较；完全一致再安装。
@@ -161,15 +161,17 @@ DayMate 使用 Windows 的“最近一次键鼠输入时间”判断电脑是否
 1. 打开“设置”中的“AI 服务”。
 2. 开启“AI 增强”。
 3. 选择服务商，例如商汤日日新、OpenAI、DeepSeek、通义千问、硅基流动、智谱、Moonshot、OpenRouter、Ollama 或自定义 OpenAI 兼容接口。
-4. 填写服务商提供的 Base URL、模型名称和 API Key。
-5. 先点击“保存密钥”，再点击“测试连接”。普通服务配置自动保存在本机。
+4. 核对 Base URL，填入 Key 并点击“保存密钥”；然后点击“获取可用模型”，筛选并选择文本模型，也可手动填写。
+5. 点击“测试连接”，有效正文返回后才算成功。各服务商的地址和模型分别保留，切换回来无需重填普通配置。
 6. 设置“每日 AI 调用上限”（默认 20 次）。需要按今日活动调整推荐时，再开启汇总分享。
 
 API Key 保存在 Windows 凭据管理器，不会写入 Git 仓库、普通配置、SQLite 活动数据库或日志。不要把自己的 Key 发到 GitHub Issue、截图或公开聊天中。
 
-点击 AI 推荐会先展示发送预览，确认后才调用。默认只发送音乐类别；开启汇总分享后才发送活跃分钟数和未完成任务数量。无论是否开启，都不会发送窗口标题、任务标题、正文或聊天内容。
+点击 AI 推荐会先展示发送预览，确认后才调用。默认发送音乐类别、自选场景、自选心情和当前小时；开启汇总分享后才发送活跃分钟数和未完成任务数量。不发送窗口标题、任务标题、正文或聊天内容。推荐仅改变本次播放类别，不覆盖长期音乐偏好，也不联动每日好句。
 
-相同条件的结果可在 15 分钟内复用，界面会标记“近期缓存”。无网络、额度不足或返回格式无效时自动使用本地推荐。每日请求次数包含测试连接、失败及重试，不等同于服务商账单；关闭再打开应用不会重置当天次数。测试连接会发送固定短句。
+独立鼓励仅发送自选场景、心情、当前小时和陪伴语气；不会附带活动摘要。失败时使用本地鼓励并标明来源。服务商、模型与权限的区别、费用说明及详细排错见[自带 API Key 指南](docs/ai-setup.md)。
+
+相同条件的音乐和鼓励结果可在 15 分钟内复用，模型目录缓存 10 分钟。无网络、额度不足或返回格式无效时自动使用本地推荐。每日请求次数包含获取目录、测试连接、失败及重试，不等同于服务商账单；关闭再打开应用不会重置当天次数。测试连接会发送固定短句，可能按所选模型定价收费。
 
 如服务地址不正确、密钥无权限或模型不可用，界面会给出具体处理提示。远程接口使用 HTTPS，本机 Ollama 可使用 HTTP；Base URL 不要附带 `/chat/completions` 或密钥参数。“删除密钥”只删除当前服务商的本机凭据，不会注销服务商账号。
 

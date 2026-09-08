@@ -8,9 +8,9 @@
 
 DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是企业监控软件，也不是要求用户维护复杂清单的项目管理工具。它只想帮用户看见昨天、选出今天最值得做的一件事，并更轻松地开始。
 
-当前版本：`0.6.1`（MVP 开发版）
+当前版本：`0.7.0`（MVP 开发版）
 
-[⬇️ 直接下载 DayMate 0.6.1 Windows 安装包](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.6.1/DayMate_0.6.1_x64-setup.exe) · [查看最新版本](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md)
+[⬇️ 直接下载 DayMate 0.7.0 Windows 安装包](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.7.0/DayMate_0.7.0_x64-setup.exe) · [查看最新版本](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md) · [自带 API Key 配置指南](docs/ai-setup.md)
 
 ## 已实现
 
@@ -27,6 +27,8 @@ DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是
 - 四首 CC0 音乐随应用离线提供，网络曲库不可用时也能播放
 - 每日舒适背景：七套柔和渐变按日期稳定轮换，也可随时手动换景
 - 多 AI 服务商设置与连接测试，包含硅基流动通义千问预设；API Key 安全保存到 Windows 凭据管理器
+- 按服务商记住地址和模型，显式获取可用模型并筛选；保持手动输入及具体排错提示
+- 按自选场景、心情和时段推荐音乐，独立生成原创鼓励；临时推荐不会覆盖长期音乐偏好
 - AI 发送预览、默认关闭的活动汇总分享、每日请求上限、近期结果缓存、失败本地回退
 - 系统开机启动读写与撤销、保留数据目录、专注完成提醒及测试通知
 - 隐私控制：活动记录、窗口标题、空闲检测开关和二次确认删除
@@ -171,7 +173,7 @@ src-tauri/target/release/bundle/nsis/
 - 新版保存 AI 密钥后若降级到旧应用，需要重新配置密钥。活动数据库仍为 v5，升级前建议备份数据。
 - 任务与偏好当前由 WebView 本地存储保存；活动记录使用 SQLite。后续版本会统一迁移至 SQLite。
 - 开机自启与通知通过 Tauri 官方插件实现；Windows 勿扰模式可能隐藏通知横幅，设置页提供系统状态和测试按钮。
-- AI 自然语言总结尚未接入业务页面；v0.2.0 已完成多平台安全配置和连接基础。
+- AI 已用于场景音乐与独立鼓励；每日自然语言总结和 AI 图片生成尚未上线。背景继续本地轮换，不自动消耗生图额度。
 
 ## 开源协议
 

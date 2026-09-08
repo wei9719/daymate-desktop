@@ -30,6 +30,11 @@ vi.mock("./native", async (importOriginal) => ({
   deleteAiKey: vi.fn(async () => undefined),
   getAiUsage: vi.fn(async () => ({ date: "2026-09-08", calls: 0 })),
   testAiConnection: vi.fn(async () => "连接成功"),
+  listAiModels: vi.fn(async () => ({ models: ["test-chat"], source: "live" })),
+  generateEncouragement: vi.fn(async () => ({
+    text: "按自己的节奏开始就好。",
+    source: "ai",
+  })),
   recommendMusicWithAi: vi.fn(async () => ({
     category: "focus",
     reason: "适合安静开始",
@@ -94,6 +99,14 @@ beforeEach(() => {
     message: "",
   });
   vi.mocked(native.saveAiKey).mockResolvedValue(undefined);
+  vi.mocked(native.listAiModels).mockResolvedValue({
+    models: ["test-chat"],
+    source: "live",
+  });
+  vi.mocked(native.generateEncouragement).mockResolvedValue({
+    text: "按自己的节奏开始就好。",
+    source: "ai",
+  });
   vi.mocked(native.recommendMusicWithAi).mockResolvedValue({
     category: "focus",
     reason: "适合安静开始",
@@ -153,7 +166,7 @@ describe("AI 推荐确认", () => {
         maxDailyCalls: 20,
       }),
     );
-    expect(useAppStore.getState().preferences.musicCategory).not.toBe("smart");
+    expect(useAppStore.getState().preferences.musicCategory).toBe("smart");
   });
 
   it("主动分享时预览与发送的汇总相同，连续点击不重复请求", async () => {
@@ -396,6 +409,362 @@ describe("专注完成通知", () => {
     expect(useAppStore.getState().tasks[0].completed).toBe(true);
     expect(system.sendFocusCompletedNotification).not.toHaveBeenCalled();
   });
+});
+
+describe("平台配置与模型选择", () => {
+  it("地址只增尾空格不取消正在读取的密钥状态，错误地址明确拒绝", async () => {
+    let finish!: (status: native.AiKeyStatus) => void;
+    vi.mocked(native.getAiKeyStatus).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<SettingsPage />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Base URL" }), {
+      target: { value: `${initialPreferences.aiBaseUrl} ` },
+    });
+    expect(native.getAiKeyStatus).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      finish({ saved: true, usable: true, message: "" });
+    });
+    expect(screen.getByRole("button", { name: "获取模型" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "测试连接" })).toBeEnabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Base URL" }), {
+      target: { value: `${initialPreferences.aiBaseUrl}?key=secret` },
+    });
+    expect(screen.getByText(/接口地址不能包含密钥/)).toBeInTheDocument();
+    expect(useAppStore.getState().preferences.aiBaseUrl).toBe(
+      initialPreferences.aiBaseUrl,
+    );
+    expect(screen.getByRole("button", { name: "获取模型" })).toBeEnabled();
+  });
+  it("切换平台保留分别编辑的接口和模型，且不会自动获取目录", async () => {
+    render(<SettingsPage />);
+    await screen.findByText("密钥已配置");
+    fireEvent.change(screen.getByRole("textbox", { name: "模型名称" }), {
+      target: { value: "my-sense-model" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "服务商" }), {
+      target: { value: "siliconflow" },
+    });
+    await screen.findByText("密钥已配置");
+    fireEvent.change(screen.getByRole("textbox", { name: "Base URL" }), {
+      target: { value: "https://custom-sf.example/v1" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "模型名称" }), {
+      target: { value: "Qwen/my-model" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "服务商" }), {
+      target: { value: initialPreferences.aiProvider },
+    });
+    expect(screen.getByRole("textbox", { name: "模型名称" })).toHaveValue(
+      "my-sense-model",
+    );
+    fireEvent.change(screen.getByRole("combobox", { name: "服务商" }), {
+      target: { value: "siliconflow" },
+    });
+    expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+      "https://custom-sf.example/v1",
+    );
+    expect(screen.getByRole("textbox", { name: "模型名称" })).toHaveValue(
+      "Qwen/my-model",
+    );
+    expect(native.listAiModels).not.toHaveBeenCalled();
+    await act(async () => undefined);
+  });
+
+  it("只有匹配的已存密钥能获取目录，目录不会自动替换模型", async () => {
+    vi.mocked(native.getAiKeyStatus).mockResolvedValue({
+      saved: true,
+      usable: false,
+      message: "接口未授权",
+    });
+    const view = render(<SettingsPage />);
+    await screen.findByText("接口未授权");
+    expect(screen.getByRole("button", { name: "获取模型" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "获取模型" }));
+    expect(native.listAiModels).not.toHaveBeenCalled();
+    view.unmount();
+    vi.mocked(native.getAiKeyStatus).mockResolvedValue({
+      saved: true,
+      usable: true,
+      message: "",
+    });
+    vi.mocked(native.listAiModels).mockResolvedValue({
+      models: ["Qwen/Qwen3-8B", "sensenova-u1-fast"],
+      source: "live",
+    });
+    render(<SettingsPage />);
+    await screen.findByText("密钥已配置");
+    fireEvent.click(screen.getByRole("button", { name: "获取模型" }));
+    await screen.findByRole("combobox", { name: "选择目录模型" });
+    expect(screen.getByRole("textbox", { name: "模型名称" })).toHaveValue(
+      initialPreferences.aiModel,
+    );
+    expect(native.listAiModels).toHaveBeenCalledWith(
+      initialPreferences.aiProvider,
+      initialPreferences.aiBaseUrl,
+      true,
+      20,
+    );
+    expect(
+      screen.getByRole("option", { name: /sensenova-u1-fast/ }),
+    ).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "筛选模型" }), {
+      target: { value: "qwen" },
+    });
+    expect(
+      screen.queryByRole("option", { name: /sensenova-u1-fast/ }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "选择目录模型" }), {
+      target: { value: "Qwen/Qwen3-8B" },
+    });
+    expect(screen.getByRole("textbox", { name: "模型名称" })).toHaveValue(
+      "Qwen/Qwen3-8B",
+    );
+    expect(native.testAiConnection).not.toHaveBeenCalled();
+  });
+
+  it("模型目录失败/为空仍可手输，失败消息不会锁住界面", async () => {
+    vi.mocked(native.listAiModels)
+      .mockRejectedValueOnce("此接口不支持模型目录")
+      .mockResolvedValueOnce({ models: [], source: "live" });
+    render(<SettingsPage />);
+    await screen.findByText("密钥已配置");
+    fireEvent.click(screen.getByRole("button", { name: "获取模型" }));
+    await screen.findByText(/此接口不支持模型目录/);
+    expect(screen.getByRole("textbox", { name: "模型名称" })).toBeEnabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "模型名称" }), {
+      target: { value: "manual-chat" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "获取模型" }));
+    await screen.findByText(/未返回模型目录/);
+    expect(screen.getByRole("textbox", { name: "模型名称" })).toHaveValue(
+      "manual-chat",
+    );
+  });
+
+  it("目录加载防连击，切换服务商后丢弃旧平台迟到结果", async () => {
+    let finish!: (list: native.AiModelList) => void;
+    vi.mocked(native.listAiModels).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<SettingsPage />);
+    await screen.findByText("密钥已配置");
+    fireEvent.click(screen.getByRole("button", { name: "获取模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "正在获取模型…" }));
+    expect(native.listAiModels).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByRole("combobox", { name: "服务商" }), {
+      target: { value: "siliconflow" },
+    });
+    await act(async () => {
+      finish({ models: ["late-old-model"], source: "live" });
+    });
+    expect(
+      screen.queryByRole("option", { name: "late-old-model" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "模型名称" })).toHaveValue(
+      "Qwen/Qwen3-8B",
+    );
+    expect(screen.getByRole("button", { name: "获取模型" })).toBeEnabled();
+  });
+});
+
+describe("场景音乐与独立鼓励交互", () => {
+  it("图像生成模型不会被用于文字陪伴请求", async () => {
+    useAppStore.getState().updatePreferences({ aiModel: "sensenova-u1-fast" });
+    render(<ContentPage />);
+    expect(screen.getByRole("button", { name: "给我一句鼓励" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /AI 按今日节奏推荐/ }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/请先在设置中选择文本聊天模型/),
+    ).toBeInTheDocument();
+    expect(native.generateEncouragement).not.toHaveBeenCalled();
+    expect(native.recommendMusicWithAi).not.toHaveBeenCalled();
+    await act(async () => undefined);
+  });
+  it("音乐预览完整展示场景心情，AI类别只用于本次播放且不改好句", async () => {
+    const view = render(<ContentPage />);
+    const quote = view.container.querySelector(".quote h2")?.textContent;
+    fireEvent.change(screen.getByRole("combobox", { name: "当前场景" }), {
+      target: { value: "focus" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "此刻心情" }), {
+      target: { value: "tense" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /AI 按今日节奏推荐/ }));
+    await screen.findByText("确认本次发送内容");
+    expect(screen.getByText("场景：专心做事")).toBeInTheDocument();
+    expect(screen.getByText("心情：有点紧绷")).toBeInTheDocument();
+    expect(screen.getByText(/本地时段：\d+ 点/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认推荐" }));
+    await screen.findByText(/AI 推荐 ·/);
+    expect(native.recommendMusicWithAi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scene: "focus",
+        mood: "tense",
+        hour: expect.any(Number),
+      }),
+    );
+    expect(useAppStore.getState().preferences.musicCategory).toBe("smart");
+    expect(screen.getByRole("button", { name: "轻柔专注" })).toHaveClass(
+      "active",
+    );
+    expect(view.container.querySelector(".quote h2")?.textContent).toBe(quote);
+  });
+
+  it("鼓励单独确认、无摘要字段、不改变好句或音乐；失败温和回退", async () => {
+    useAppStore.getState().updatePreferences({ aiShareActivitySummary: true });
+    vi.mocked(native.generateEncouragement).mockRejectedValueOnce("连接失败");
+    const view = render(<ContentPage />);
+    const quote = view.container.querySelector(".quote h2")?.textContent;
+    fireEvent.change(screen.getByRole("combobox", { name: "当前场景" }), {
+      target: { value: "rest" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "给我一句鼓励" }));
+    expect(
+      screen.getByRole("region", { name: "鼓励发送预览" }),
+    ).toHaveTextContent("不读取或发送任务");
+    expect(native.generateEncouragement).not.toHaveBeenCalled();
+    expect(native.getTodayStats).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认生成鼓励" }));
+    await screen.findByText("本地鼓励");
+    expect(
+      Object.keys(
+        vi.mocked(native.generateEncouragement).mock.calls[0][0],
+      ).sort(),
+    ).toEqual(
+      [
+        "provider",
+        "baseUrl",
+        "model",
+        "needsKey",
+        "maxDailyCalls",
+        "scene",
+        "mood",
+        "hour",
+        "tone",
+      ].sort(),
+    );
+    expect(native.recommendMusicWithAi).not.toHaveBeenCalled();
+    expect(view.container.querySelector(".quote h2")?.textContent).toBe(quote);
+    expect(useAppStore.getState().preferences.musicCategory).toBe("smart");
+  });
+
+  it("场景变更撤销旧预览，未确认的鼓励不联网", async () => {
+    render(<ContentPage />);
+    fireEvent.click(screen.getByRole("button", { name: "给我一句鼓励" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "此刻心情" }), {
+      target: { value: "good" },
+    });
+    expect(
+      screen.queryByRole("region", { name: "鼓励发送预览" }),
+    ).not.toBeInTheDocument();
+    expect(native.generateEncouragement).not.toHaveBeenCalled();
+    await act(async () => undefined);
+  });
+
+  it("更换音乐类别不清空已经生成的鼓励", async () => {
+    render(<ContentPage />);
+    fireEvent.click(screen.getByRole("button", { name: "给我一句鼓励" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认生成鼓励" }));
+    await screen.findByText("按自己的节奏开始就好。");
+    fireEvent.click(screen.getByRole("button", { name: "国风民乐" }));
+    expect(screen.getByText("按自己的节奏开始就好。")).toBeInTheDocument();
+    expect(native.generateEncouragement).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["search", "same-category"])(
+    "手动%s后旧AI音乐结果不能覆盖新意图，结束后能再次推荐",
+    async (action) => {
+      let finish!: (response: native.AiMusicResponse) => void;
+      vi.mocked(native.recommendMusicWithAi).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      render(<ContentPage />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /AI 按今日节奏推荐/ }),
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "确认推荐" }));
+      if (action === "search") {
+        fireEvent.change(
+          screen.getByPlaceholderText("搜索 Audius 曲名、音乐人或心情"),
+          { target: { value: "我选择的歌曲" } },
+        );
+        fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+      } else {
+        fireEvent.click(screen.getByRole("button", { name: "智能推荐" }));
+      }
+      await act(async () => {
+        finish({ category: "classical", reason: "迟到的推荐", source: "ai" });
+      });
+      expect(screen.queryByText(/迟到的推荐/)).not.toBeInTheDocument();
+      if (action === "search") {
+        expect(
+          screen.getByPlaceholderText("搜索 Audius 曲名、音乐人或心情"),
+        ).toHaveValue("我选择的歌曲");
+        expect(screen.getByText(/正在搜索“我选择的歌曲”/)).toBeInTheDocument();
+      } else {
+        expect(screen.getByRole("button", { name: "智能推荐" })).toHaveClass(
+          "active",
+        );
+      }
+      expect(
+        screen.getByRole("button", { name: /AI 按今日节奏推荐/ }),
+      ).toBeEnabled();
+      expect(native.recommendMusicWithAi).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["scene", "model"])(
+    "%s改变后丢弃在途鼓励结果，防止重复请求",
+    async (change) => {
+      let finish!: (response: native.AiEncouragementResponse) => void;
+      vi.mocked(native.generateEncouragement).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      render(<ContentPage />);
+      fireEvent.click(screen.getByRole("button", { name: "给我一句鼓励" }));
+      fireEvent.click(screen.getByRole("button", { name: "确认生成鼓励" }));
+      fireEvent.click(screen.getByRole("button", { name: "正在想一句话…" }));
+      expect(native.generateEncouragement).toHaveBeenCalledTimes(1);
+      if (change === "scene") {
+        fireEvent.change(screen.getByRole("combobox", { name: "当前场景" }), {
+          target: { value: "sleep" },
+        });
+      } else {
+        act(() => {
+          useAppStore
+            .getState()
+            .updatePreferences({ aiModel: "changed-model" });
+        });
+        act(() => {
+          useAppStore
+            .getState()
+            .updatePreferences({ aiModel: initialPreferences.aiModel });
+        });
+      }
+      await act(async () => {
+        finish({ text: "旧场景结果", source: "ai" });
+      });
+      expect(screen.queryByText("旧场景结果")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "给我一句鼓励" }),
+      ).toBeEnabled();
+    },
+  );
 });
 
 describe("首次启动隐私与开机启动", () => {
