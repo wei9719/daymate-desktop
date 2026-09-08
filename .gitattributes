@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+# Windows batch files require native line endings when added in the future.
+*.bat text eol=crlf
+*.cmd text eol=crlf

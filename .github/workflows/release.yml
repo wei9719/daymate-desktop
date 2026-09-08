@@ -55,6 +55,12 @@ jobs:
         with:
           args: -- --locked
           includeUpdaterJson: false
+      - name: Smoke test the installed Windows app
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          $version = $env:RELEASE_TAG.Substring(1)
+          ./scripts/smoke-windows.ps1 -InstallerPath "src-tauri/target/release/bundle/nsis/DayMate_${version}_x64-setup.exe"
       - name: Create checksum and upload complete draft
         shell: pwsh
         env:

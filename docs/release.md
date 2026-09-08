@@ -55,14 +55,21 @@ git push origin v0.6.0
 
 `.github/workflows/release.yml` 复用 `ci.yml` 的完整质量检查，保证 PR、main 和 Tag 发布执行相同门禁：格式、Lint、类型检查、前端测试、发布脚本测试、前端构建、版本一致性、Rust fmt、Clippy 与 Rust 测试。Rust 依赖使用锁文件。
 
+仓库通过 `.gitattributes` 与 `.prettierrc.json` 统一使用 LF 换行，即使 Windows Git 开启 `core.autocrlf=true`，新检出的源文件也保持 LF。已有工作目录更新规则后可运行 `npx prettier --write .` 统一格式，再执行格式检查；不要通过关闭门禁解决换行差异。
+
 通过后，发布工作流按以下顺序执行：
 
 1. 验证 Tag 与三个版本文件、两个锁文件一致，且提交属于 `main`。
 2. 仅从 `CHANGELOG.md` 的对应版本提取 Release Notes，验证日期、更新内容与数据库迁移说明，并附加下载和校验说明。
 3. 使用 Tauri 官方构建 Action 生成 Windows x64 安装包。
-4. 计算安装包 SHA-256，创建或续传未公开的 Release 草稿，上传安装包和 `SHA256SUMS.txt`。
-5. 核对两个远端资产的名称、大小和上传完成状态；GitHub 返回摘要时一并核对 SHA-256。
-6. 全部成功后才公开 Release，并设置为最新版本。
+4. 在 GitHub 托管 Windows runner 上静默安装刚生成的安装包，运行安装与启动冒烟测试。
+5. 计算安装包 SHA-256，创建或续传未公开的 Release 草稿，上传安装包和 `SHA256SUMS.txt`。
+6. 核对两个远端资产的名称、大小和上传完成状态；GitHub 返回摘要时一并核对 SHA-256。
+7. 全部成功后才公开 Release，并设置为最新版本。
+
+`scripts/smoke-windows.ps1` 仅允许在 GitHub 托管 Windows runner 执行，不在开发者电脑或自托管机器安装测试副本。测试使用 `RUNNER_TEMP` 下的唯一安装目录、独立 `DAYMATE_DATA_DIR` 与 WebView 缓存：确认 NSIS 安装成功、SQLite 文件头有效、主进程持续存活，以及第二次启动正常退出且原实例仍存活。结束时只清理本次启动的进程及其子进程，临时安装和数据随托管 runner 销毁。
+
+冒烟测试没有验证界面渲染、按钮交互、音乐播放、通知、开机启动或重启后的行为，也不代表这些场景已通过验收；它们仍需后面的人工验收。测试失败会阻止安装包公开发布。
 
 普通用户从 [最新版本下载页](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest) 下载 `DayMate_X.Y.Z_x64-setup.exe` 即可，不需要开发环境。正式中文更新说明以 CHANGELOG 为准，GitHub 自动提交列表不替代它。
 
