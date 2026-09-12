@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { URL } from "node:url";
 import test from "node:test";
 import { validateVersions } from "./check-version.mjs";
 import { releaseNotes } from "./release-notes.mjs";
@@ -13,12 +14,27 @@ test("repository links and desktop opener follow the canonical repository", () =
     (entry) => entry.identifier === "opener:allow-open-url",
   );
   assert.deepEqual(
-    opener.allow.filter((entry) => entry.url.startsWith("https://github.com/")),
+    opener.allow.filter(
+      (entry) => new URL(entry.url).hostname === "github.com",
+    ),
     [{ url: repository }, { url: repository + "/*" }],
   );
   for (const file of ["README.md", "USER_GUIDE.md", "src/App.tsx"]) {
     const source = fs.readFileSync(file, "utf8");
-    assert.ok(source.includes(repository), file);
+    const links = [...source.matchAll(/(?:href="|\]\()(https?:\/\/[^"'\s)]+)/g)]
+      .map((match) => new URL(match[1]))
+      .filter((url) => url.hostname === "github.com");
+    assert.ok(links.length > 0, file);
+    for (const url of links) {
+      assert.equal(url.origin, new URL(repository).origin, file);
+      assert.equal(url.username, "", file);
+      assert.equal(url.password, "", file);
+      const root = new URL(repository).pathname;
+      assert.ok(
+        url.pathname === root || url.pathname.startsWith(root + "/"),
+        file,
+      );
+    }
     assert.ok(!source.includes("zhangweiguo9719-web/daymate-desktop"), file);
   }
 });
