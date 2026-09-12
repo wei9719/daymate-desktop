@@ -861,7 +861,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "windows 0.61.3",
  "windows-icons",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
