@@ -1,6 +1,6 @@
 # v0.6.1 安全与兼容性验证记录
 
-记录日期：2026-09-08。目标版本：v0.6.1。本页区分本地验证证据与云端发布门禁；云端实际结果以本版 [Actions 运行记录](https://github.com/zhangweiguo9719-web/daymate-desktop/actions/workflows/release.yml)为准，不代表软件不存在未知风险。
+记录日期：2026-09-08。目标版本：v0.6.1。本页区分本地验证证据与云端发布门禁；云端实际结果以本版 [Actions 运行记录](https://github.com/wei9719/daymate-desktop/actions/workflows/release.yml)为准，不代表软件不存在未知风险。
 
 ## 已执行的检查
 

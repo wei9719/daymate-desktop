@@ -2628,7 +2628,7 @@ export function SettingsPage() {
         </div>
         <div className="about-links">
           <a
-            href="https://github.com/zhangweiguo9719-web/daymate-desktop"
+            href="https://github.com/wei9719/daymate-desktop"
             target="_blank"
             rel="noopener noreferrer"
             className="button secondary"

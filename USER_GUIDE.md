@@ -4,10 +4,10 @@
 
 ## 立即下载
 
-[⬇️ **直接下载 DayMate 0.8.0 Windows 安装包（64 位）**](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.8.0/DayMate_0.8.0_x64-setup.exe)
+[⬇️ **直接下载 DayMate 0.8.0 Windows 安装包（64 位）**](https://github.com/wei9719/daymate-desktop/releases/download/v0.8.0/DayMate_0.8.0_x64-setup.exe)
 
-- [查看最新版本与更新说明](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest)
-- [下载 SHA256 校验文件](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.8.0/SHA256SUMS.txt)
+- [查看最新版本与更新说明](https://github.com/wei9719/daymate-desktop/releases/latest)
+- [下载 SHA256 校验文件](https://github.com/wei9719/daymate-desktop/releases/download/v0.8.0/SHA256SUMS.txt)
 - 当前支持：Windows 10 / Windows 11，64 位
 - GitHub 账号：不需要
 - AI API Key：不需要；只有 AI 增强功能需要自行配置
@@ -92,6 +92,8 @@ Get-FileHash .\DayMate_0.8.0_x64-setup.exe -Algorithm SHA256
 如果暂时没有状态，可以先用 5 分钟启动。DayMate 的目标是帮你更容易开始，不会锁定电脑或强制关闭其他软件。
 
 ## 5. 音乐推荐与播放
+
+![心情推荐与候选列表（v0.8.0 云端演示、模拟歌曲）](docs/screenshots/daymate-mood-music-v0.8.0.png)
 
 DayMate 使用可解释的本地规则，根据时间、音乐类别、自选场景、心情及本机反馈整理候选；没有 AI Key 也可以使用。在线与本地歌曲共用一个播放器，切换 DayMate 页面或收起主窗口不会卸载播放器。
 
@@ -252,7 +254,7 @@ D:\DayMate\data
 
 ## 11. 更新软件
 
-1. 打开 [GitHub 最新版本页面](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest)。
+1. 打开 [GitHub 最新版本页面](https://github.com/wei9719/daymate-desktop/releases/latest)。
 2. 阅读版本更新说明。
 3. 下载最新的 `DayMate_x.y.z_x64-setup.exe`。
 4. 完全退出正在运行的 DayMate。
@@ -304,7 +306,7 @@ DayMate 会最小化到托盘，以继续活动统计、音乐和浮动球。需
 
 ### 如何报告问题
 
-前往 [GitHub Issues](https://github.com/zhangweiguo9719-web/daymate-desktop/issues) 提交问题，并附上：
+前往 [GitHub Issues](https://github.com/wei9719/daymate-desktop/issues) 提交问题，并附上：
 
 - Windows 版本
 - DayMate 版本

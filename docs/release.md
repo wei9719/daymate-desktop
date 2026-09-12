@@ -87,7 +87,7 @@ Release 另复用 CodeQL 工作流，构建同时依赖质量和安全检查。`
 
 安装和数据路径包含中文及空格。`legacy-v4` 情景由 `smoke-fixture.py` 生成合成历史，核对升级后的活跃/空闲秒数、键鼠次数、中文路径和 AI 用量表。不要用真实个人数据库作为云端测试输入。当前使用 Server runner 并不能替代真实 Windows 10/11 的物理设备兼容性验收。
 
-普通用户从 [最新版本下载页](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest) 下载 `DayMate_X.Y.Z_x64-setup.exe` 即可，不需要开发环境。正式中文更新说明以 CHANGELOG 为准，GitHub 自动提交列表不替代它。
+普通用户从 [最新版本下载页](https://github.com/wei9719/daymate-desktop/releases/latest) 下载 `DayMate_X.Y.Z_x64-setup.exe` 即可，不需要开发环境。正式中文更新说明以 CHANGELOG 为准，GitHub 自动提交列表不替代它。
 
 ## 失败与重试
 

@@ -4,6 +4,25 @@ import test from "node:test";
 import { validateVersions } from "./check-version.mjs";
 import { releaseNotes } from "./release-notes.mjs";
 
+test("repository links and desktop opener follow the canonical repository", () => {
+  const repository = "https://github.com/wei9719/daymate-desktop";
+  const capability = JSON.parse(
+    fs.readFileSync("src-tauri/capabilities/default.json", "utf8"),
+  );
+  const opener = capability.permissions.find(
+    (entry) => entry.identifier === "opener:allow-open-url",
+  );
+  assert.deepEqual(
+    opener.allow.filter((entry) => entry.url.startsWith("https://github.com/")),
+    [{ url: repository }, { url: repository + "/*" }],
+  );
+  for (const file of ["README.md", "USER_GUIDE.md", "src/App.tsx"]) {
+    const source = fs.readFileSync(file, "utf8");
+    assert.ok(source.includes(repository), file);
+    assert.ok(!source.includes("zhangweiguo9719-web/daymate-desktop"), file);
+  }
+});
+
 test("external workflow actions use immutable commit SHAs", () => {
   for (const name of fs.readdirSync(".github/workflows")) {
     if (!name.endsWith(".yml")) continue;

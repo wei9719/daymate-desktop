@@ -33,8 +33,8 @@
         { "url": "https://audius.co" },
         { "url": "https://audius.co/*" },
         { "url": "https://opengameart.org/*" },
-        { "url": "https://github.com/zhangweiguo9719-web/daymate-desktop" },
-        { "url": "https://github.com/zhangweiguo9719-web/daymate-desktop/*" }
+        { "url": "https://github.com/wei9719/daymate-desktop" },
+        { "url": "https://github.com/wei9719/daymate-desktop/*" }
       ]
     }
   ]

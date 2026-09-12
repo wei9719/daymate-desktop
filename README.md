@@ -10,7 +10,7 @@ DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是
 
 当前版本：`0.8.0`（MVP 开发版）
 
-[⬇️ 直接下载 DayMate 0.8.0 Windows 安装包](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/download/v0.8.0/DayMate_0.8.0_x64-setup.exe) · [查看最新版本](https://github.com/zhangweiguo9719-web/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md) · [自带 API Key 配置指南](docs/ai-setup.md)
+[⬇️ 直接下载 DayMate 0.8.0 Windows 安装包](https://github.com/wei9719/daymate-desktop/releases/download/v0.8.0/DayMate_0.8.0_x64-setup.exe) · [查看最新版本](https://github.com/wei9719/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md) · [自带 API Key 配置指南](docs/ai-setup.md)
 
 想看懂代码为什么这样设计？从[工程手册：架构、数据流与岗位能力映射](docs/engineering-handbook.md)开始，再看[截至 2026-09-12 的论文、官方项目与技术取舍](docs/research-and-decisions-v0.8.0.md)。本版[验证记录](docs/verification-v0.8.0.md)单独列出已通过检查和仍需真机验证的部分。
 
@@ -45,11 +45,22 @@ DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是
 
 ## 应用截图
 
+![DayMate 0.8.0 心情音乐候选与本机反馈](docs/screenshots/daymate-mood-music-v0.8.0.png)
+
+v0.8.0 云端 Chromium 演示截图：偏好与歌曲为虚构测试数据，展示实际前端界面，不代表真实流媒体或 Windows 系统能力验收。
+
+<details>
+<summary>AI 设置、浮动球及早期功能截图</summary>
+
+![DayMate 0.8.0 多平台 AI 设置（云端浏览器演示）](docs/screenshots/daymate-settings-v0.8.0.png)
+
 ![DayMate 0.2.0 今日主界面与 Audius 音乐推荐](docs/screenshots/daymate-dashboard-v0.2.0.png)
 
 ![DayMate 桌面浮动球](docs/screenshots/daymate-floating-ball.png)
 
 ![DayMate 0.3.0 键鼠活跃时间回顾](docs/screenshots/daymate-review-v0.3.0.png)
+
+</details>
 
 ## 技术栈
 

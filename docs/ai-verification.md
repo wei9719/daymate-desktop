@@ -36,6 +36,6 @@
 
 正式安装包仍必须通过 Windows Server 2022/2025 × 全新数据/合成旧数据的四组安装检查，然后才公开 Release。它们验证安装、初始化、旧库记录保留和单实例，不代替 Windows 10/11 实机上的完整界面、外设、托盘、通知、自启或长时间播放。
 
-最终结果与截图以对应提交的 [CI](https://github.com/zhangweiguo9719-web/daymate-desktop/actions/workflows/ci.yml)、[云端界面测试](https://github.com/zhangweiguo9719-web/daymate-desktop/actions/workflows/ui-smoke.yml)和 [Release](https://github.com/zhangweiguo9719-web/daymate-desktop/actions/workflows/release.yml)实际运行记录为准。
+最终结果与截图以对应提交的 [CI](https://github.com/wei9719/daymate-desktop/actions/workflows/ci.yml)、[云端界面测试](https://github.com/wei9719/daymate-desktop/actions/workflows/ui-smoke.yml)和 [Release](https://github.com/wei9719/daymate-desktop/actions/workflows/release.yml)实际运行记录为准。
 
 依赖审计与高危静态分析继续作为发布门禁；既有未维护间接依赖的边界见 [0.6.1 安全验证记录](security-compatibility.md)。不因为这轮功能测试通过而宣称没有未知安全风险。

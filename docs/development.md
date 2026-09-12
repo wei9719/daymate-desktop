@@ -14,7 +14,7 @@ Tauri 官方 Windows 环境要求同时包含 Microsoft C++ Build Tools 与 WebV
 ## 安装与运行
 
 ```powershell
-git clone https://github.com/zhangweiguo9719-web/daymate-desktop.git
+git clone https://github.com/wei9719/daymate-desktop.git
 cd daymate-desktop
 npm ci
 npm run tauri dev
