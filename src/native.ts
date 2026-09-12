@@ -26,9 +26,9 @@ function isDesktop() {
   return "__TAURI_INTERNALS__" in window;
 }
 
-export async function getTodayStats() {
+export async function getTodayStats(date?: string) {
   if (!isDesktop()) return emptyStats;
-  return invoke<TodayStats>("get_today_stats");
+  return invoke<TodayStats>("get_today_stats", { date });
 }
 
 export async function setNativeTracking(
@@ -105,6 +105,7 @@ export interface AiMusicRequest {
   unfinishedTasks: number | null;
   scene: CompanionScene;
   mood: CompanionMood;
+  intent: "match" | "lift";
   hour: number;
 }
 

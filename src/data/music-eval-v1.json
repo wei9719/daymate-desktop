@@ -1,0 +1,32 @@
+{
+  "version": "synthetic-mood-v1",
+  "notice": "人工编写的合成元数据，不是真实用户偏好、音频评测或论文结果。",
+  "tracks": [
+    { "id": "a", "artist": "one", "genre": "Electronic", "mood": "Aggressive", "tags": ["techno"] },
+    { "id": "b", "artist": "two", "genre": "Hip-Hop/Rap", "mood": "Gritty", "tags": [] },
+    { "id": "c", "artist": "three", "genre": "Ambient", "mood": "Peaceful", "tags": ["rain", "nature"] },
+    { "id": "d", "artist": "four", "genre": "Electronic", "mood": "Upbeat", "tags": ["dance"] },
+    { "id": "e", "artist": "five", "genre": "Classical", "mood": "Sentimental", "tags": ["piano"] },
+    { "id": "f", "artist": "three", "genre": "Ambient", "mood": "Easygoing", "tags": ["forest"] },
+    { "id": "g", "artist": "six", "genre": "Electronic", "mood": "Energizing", "tags": ["electronic"] },
+    { "id": "h", "artist": "seven", "genre": "Classical", "mood": "Tender", "tags": ["piano"] },
+    { "id": "i", "artist": "eight", "genre": "Instrumental", "mood": "Sophisticated", "tags": ["study", "focus"] },
+    { "id": "j", "artist": "nine", "genre": "World", "mood": "Peaceful", "tags": ["guzheng", "guqin"] },
+    { "id": "k", "artist": "ten", "genre": "", "mood": "", "tags": [] },
+    { "id": "l", "artist": "eleven", "genre": "Instrumental", "mood": "Peaceful", "tags": ["lofi"] }
+  ],
+  "cases": [
+    { "id": "tense-rest", "scene": "rest", "mood": "tense", "intent": "match", "category": "smart", "hour": 14 },
+    { "id": "low-match", "scene": "auto", "mood": "low", "intent": "match", "category": "smart", "hour": 16 },
+    { "id": "low-lift", "scene": "auto", "mood": "low", "intent": "lift", "category": "smart", "hour": 16 },
+    { "id": "tired-match", "scene": "auto", "mood": "tired", "intent": "match", "category": "smart", "hour": 14 },
+    { "id": "tired-lift", "scene": "auto", "mood": "tired", "intent": "lift", "category": "smart", "hour": 14 },
+    { "id": "sleep-overrides-lift", "scene": "sleep", "mood": "good", "intent": "lift", "category": "smart", "hour": 23 },
+    { "id": "focus", "scene": "focus", "mood": "neutral", "intent": "match", "category": "smart", "hour": 10 },
+    { "id": "start", "scene": "start", "mood": "low", "intent": "match", "category": "smart", "hour": 9 },
+    { "id": "good", "scene": "auto", "mood": "good", "intent": "match", "category": "smart", "hour": 17 },
+    { "id": "relax", "scene": "relax", "mood": "neutral", "intent": "match", "category": "smart", "hour": 19 },
+    { "id": "chinese-preference", "scene": "rest", "mood": "tense", "intent": "match", "category": "chinese", "hour": 18 },
+    { "id": "classical-preference", "scene": "auto", "mood": "low", "intent": "match", "category": "classical", "hour": 12 }
+  ]
+}

@@ -1,4 +1,10 @@
 import type { MusicPlayMode } from "../types";
+import {
+  musicAlgorithmVersion,
+  planMusic,
+  rankMusicCandidates,
+  type MusicRecommendationOptions,
+} from "./musicRanking";
 
 export interface SmartTrack {
   id: string;
@@ -10,6 +16,15 @@ export interface SmartTrack {
   sourceUrl: string;
   license: string;
   source: "Audius" | "OpenGameArt";
+  genre?: string;
+  mood?: string;
+  tags?: string[];
+  recommendation?: {
+    score: number;
+    reasons: string[];
+    category: MusicCategory;
+    algorithmVersion: string;
+  };
 }
 
 export type MusicCategory =
@@ -129,7 +144,14 @@ const maxMusicResponseBytes = 512 * 1024;
 const musicPoolLifetime = 10 * 60_000;
 const maxMusicPools = 16;
 
-class MusicRequestError extends Error {}
+class MusicRequestError extends Error {
+  constructor(
+    message: string,
+    readonly empty = false,
+  ) {
+    super(message);
+  }
+}
 
 interface AudiusCandidate extends Omit<SmartTrack, "scene" | "reason"> {
   genre: string;
@@ -336,6 +358,16 @@ function parseAudiusCandidates(payload: unknown) {
       title,
       artist: boundedText(record(track.user)?.name, 160) || "Audius 独立音乐人",
       genre,
+      mood: boundedText(track.mood, 80),
+      tags: (typeof track.tags === "string"
+        ? track.tags.slice(0, 2048).split(",")
+        : Array.isArray(track.tags)
+          ? track.tags.slice(0, 20)
+          : []
+      )
+        .map((tag: unknown) => boundedText(tag, 60))
+        .filter(Boolean)
+        .slice(0, 20),
       // Never pass response-supplied stream URLs (including LAN targets) to audio.src.
       audioUrl: `https://api.audius.co/v1/tracks/${id}/stream`,
       sourceUrl: audiusSourceUrl(track.permalink),
@@ -353,6 +385,8 @@ function trackForScene(
   const { genre, ...track } = candidate;
   return {
     ...track,
+    genre,
+    tags: track.tags?.slice(),
     scene: scene.scene,
     reason: `${scene.reason}${genre ? ` · ${genre}` : ""}`,
   };
@@ -364,11 +398,12 @@ export function parseAudiusTracks(payload: unknown, scene: MusicScene) {
   );
 }
 
-async function fetchMusicPool(query: string) {
+async function fetchMusicPool(query: string, moods: readonly string[] = []) {
   const parameters = new URLSearchParams({
     query,
     limit: "40",
   });
+  moods.forEach((mood) => parameters.append("mood", mood));
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 12_000);
   try {
@@ -391,6 +426,7 @@ async function fetchMusicPool(query: string) {
     if (!tracks.length)
       throw new MusicRequestError(
         "开放曲库没有找到可直接播放的歌曲；试试曲名、歌手或类别关键词，商业版权歌曲也可通过本地导入播放。",
+        true,
       );
     return tracks;
   } finally {
@@ -398,28 +434,29 @@ async function fetchMusicPool(query: string) {
   }
 }
 
-async function musicPool(query: string) {
+async function musicPool(query: string, moods: readonly string[] = []) {
+  const key = JSON.stringify([query, [...moods].sort()]);
   const now = Date.now();
   for (const [key, pool] of musicPools) {
     if (pool.expiresAt <= now) musicPools.delete(key);
   }
-  const cached = musicPools.get(query);
+  const cached = musicPools.get(key);
   if (cached) {
     // LRU ordering changes on a hit; the original expiry does not slide.
-    musicPools.delete(query);
-    musicPools.set(query, cached);
+    musicPools.delete(key);
+    musicPools.set(key, cached);
     return cached.tracks;
   }
-  const pending = pendingMusicPools.get(query);
+  const pending = pendingMusicPools.get(key);
   if (pending) return pending;
   if (pendingMusicPools.size >= maxMusicPools)
     throw new MusicRequestError("音乐搜索正在处理中，请稍后再试。");
 
-  const request = fetchMusicPool(query);
-  pendingMusicPools.set(query, request);
+  const request = fetchMusicPool(query, moods);
+  pendingMusicPools.set(key, request);
   try {
     const tracks = await request;
-    musicPools.set(query, {
+    musicPools.set(key, {
       tracks,
       expiresAt: Date.now() + musicPoolLifetime,
     });
@@ -429,7 +466,7 @@ async function musicPool(query: string) {
     }
     return tracks;
   } finally {
-    pendingMusicPools.delete(query);
+    pendingMusicPools.delete(key);
   }
 }
 
@@ -461,4 +498,93 @@ export async function recommendMusic(
       reason: `${track.reason} 在线推荐暂时不可用，已回退到离线曲目。`,
     };
   }
+}
+
+export interface MusicRecommendationBatch {
+  tracks: SmartTrack[];
+  trace: {
+    algorithmVersion: string;
+    source: "online" | "offline";
+    candidateCount: number;
+    excludedCount: number;
+    repeatRelaxed: boolean;
+    moodFilterRelaxed: boolean;
+  };
+}
+
+export async function recommendMusicBatch(
+  offset = 0,
+  hasTasks = false,
+  hour = new Date().getHours(),
+  category: MusicCategory = "smart",
+  search = "",
+  options: MusicRecommendationOptions = {},
+): Promise<MusicRecommendationBatch> {
+  const plan = planMusic(category, hasTasks, hour, options.context);
+  const query = search.trim().slice(0, 200);
+  let candidates: SmartTrack[];
+  let source: "online" | "offline" = "online";
+  let moodFilterRelaxed = false;
+  try {
+    const moods = query ? [] : plan.moods;
+    let pool: AudiusCandidate[];
+    try {
+      pool = await musicPool(query || plan.query, moods);
+    } catch (error) {
+      // Only an empty filtered catalogue gets one wider query. Errors are not retried.
+      if (
+        !(error instanceof MusicRequestError) ||
+        !error.empty ||
+        !moods.length
+      )
+        throw error;
+      moodFilterRelaxed = true;
+      pool = await musicPool(plan.query);
+    }
+    candidates = pool.map((track) =>
+      trackForScene(track, {
+        query: query || plan.query,
+        keywords: plan.keywords,
+        scene: plan.label,
+        reason: query
+          ? "来自你的关键词搜索，是否合心意由你决定。"
+          : moodFilterRelaxed
+            ? "心情筛选暂无结果，已扩大到同类曲目；不保证符合当前心情。"
+            : "根据你选择的方向检索；曲目标签由发布者提供，不代表情绪效果保证。",
+      }),
+    );
+  } catch (error) {
+    if (query)
+      throw error instanceof MusicRequestError
+        ? error
+        : new MusicRequestError(
+            "音乐搜索暂时未连接成功，请稍后重试或导入本地音乐。",
+          );
+    source = "offline";
+    candidates = bundledTracks.map((track) => ({
+      ...track,
+      reason: `${track.reason} 在线推荐暂时不可用，已回退到离线曲目；曲库较小，无法保证心情匹配。`,
+    }));
+  }
+  const date = new Date();
+  const seed = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}:${Number.isSafeInteger(offset) ? offset : 0}`;
+  const ranked = rankMusicCandidates(
+    candidates,
+    plan,
+    options,
+    seed,
+    5,
+    query ? "search" : "recommendation",
+  );
+  return {
+    tracks: ranked.tracks,
+    trace: {
+      algorithmVersion: musicAlgorithmVersion,
+      source,
+      candidateCount: candidates.length,
+      excludedCount: ranked.excludedCount,
+      repeatRelaxed: ranked.repeatRelaxed,
+      moodFilterRelaxed,
+    },
+  };
 }

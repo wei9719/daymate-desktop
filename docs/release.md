@@ -10,22 +10,23 @@
 4. 同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`，更新 `package-lock.json` 与 `src-tauri/Cargo.lock` 中的项目版本。应用关于页从项目版本读取。
 5. 在本地完成可执行的质量检查，再提交和推送发布准备分支；浏览器和安装测试在云端运行，必须通过后才发布。
 
-以下示例以 `0.6.1` 为例，后续发布时替换版本号：
+以下示例以 `0.8.0` 为例，后续发布时替换版本号：
 
 ```powershell
 git switch main
 git pull --ff-only origin main
-git switch -c codex/release-v0.6.1
+git switch -c codex/release-v0.8.0
 # 此时编辑版本文件和 CHANGELOG，再更新锁文件。
 npm install --package-lock-only --ignore-scripts
 npm run desktop:check
 npm ci
-npm run version:check -- --tag v0.6.1
-node scripts/release-notes.mjs v0.6.1
+npm run version:check -- --tag v0.8.0
+node scripts/release-notes.mjs v0.8.0
 npm run format:check
 npm run lint
 npm run typecheck
 npm run test
+npm run eval:music
 node --test scripts/test-release.mjs
 node --test scripts/test-audit-rust.mjs
 node --test scripts/test-check-sarif.mjs
@@ -38,8 +39,8 @@ cargo clippy --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 git diff --check
 git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json CHANGELOG.md
-git commit -m "chore: prepare v0.6.1 release"
-git push -u origin codex/release-v0.6.1
+git commit -m "chore: prepare v0.8.0 release"
+git push -u origin codex/release-v0.8.0
 ```
 
 如果本机终端没有加载 Visual Studio C++ 环境，Rust 检查可使用 README 中的 `desktop:check`、`desktop:clippy`、`desktop:test` 包装命令。检查失败时先修复，不能跳过后继续发布。
@@ -51,9 +52,9 @@ git push -u origin codex/release-v0.6.1
 ```powershell
 git switch main
 git pull --ff-only origin main
-npm run version:check -- --tag v0.6.1
-git tag -a v0.6.1 -m "DayMate v0.6.1"
-git push origin v0.6.1
+npm run version:check -- --tag v0.8.0
+git tag -a v0.8.0 -m "DayMate v0.8.0"
+git push origin v0.8.0
 ```
 
 ## 自动发布顺序
@@ -65,6 +66,8 @@ git push origin v0.6.1
 Release 另复用 CodeQL 工作流，构建同时依赖质量和安全检查。`scripts/check-sarif.mjs` 检查本次实际生成的报告：安全分值至少 7 或 error 级安全结果阻断，报告不完整、引用规则无效也失败。Tag 仍完整执行扫描和本地门禁，只不上传告警/查询数据库；main/PR 上传供 GitHub 告警管理。不要用扫描任务本身的绿色状态代替结果检查。
 
 0.7.0 起，CI 还复用 `ui-smoke.yml` 在 GitHub 托管 Ubuntu Chromium 验证设置与内容页。Release 将同一 UI 工作流作为独立构建前置条件，复用 CI 时跳过重复 UI job，但不跳过实际浏览器门禁。它使用虚构偏好与模拟曲库，没有 Key、真实 AI 或 Tauri IPC；测试设置恢复、浏览器原生能力提示、场景/鼓励回退及音乐与好句独立，保存截图和报告 14 天。本地只允许 `npm run test:ui -- --list` 发现测试，不下载浏览器或操作旧应用。
+
+0.8.0 增加心情意图、反馈清除、跨页曲终连播/本地导入与专注恢复流程。连播生命周期用受控 Audio 事件验证，不声称测试了真实声卡或供应商流媒体。单元测试仅发现 `src/**/*.test.{ts,tsx}`，不遍历 Rust 构建输出；版本化音乐合成评测在 CI 单独展示，同时属于完整单测套件。
 
 仓库通过 `.gitattributes` 与 `.prettierrc.json` 统一使用 LF 换行，即使 Windows Git 开启 `core.autocrlf=true`，新检出的源文件也保持 LF。已有工作目录更新规则后可运行 `npx prettier --write .` 统一格式，再执行格式检查；不要通过关闭门禁解决换行差异。
 

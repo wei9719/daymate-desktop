@@ -207,7 +207,9 @@ test("内容：场景与鼓励本地回退，音乐操作不改变每日好句",
 
   await music.getByRole("button", { name: "国风民乐", exact: true }).click();
   await expect(musicTitle).toContainText("云端模拟曲目");
-  await expect(music.locator(".music-copy span")).toContainText("国风民乐");
+  await expect(music.locator(".candidate-copy > span").first()).toContainText(
+    "国风民乐",
+  );
   await expect(quote).toHaveText(quoteText);
   await music.getByRole("button", { name: "单曲循环", exact: true }).click();
   await expect(
@@ -270,4 +272,216 @@ test("内容：场景与鼓励本地回退，音乐操作不改变每日好句",
     path: testInfo.outputPath("content.png"),
     contentType: "image/png",
   });
+});
+
+test("心情推荐与本机反馈：显式应用、不改好句、清除需确认", async ({
+  page,
+}, testInfo) => {
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "每日内容", exact: true })
+    .click();
+  const quote = page.locator(".content-card.quote h2");
+  const originalQuote = await quote.innerText();
+  const title = page.locator(".music-copy strong");
+  const originalTitle = await title.innerText();
+  await page
+    .getByRole("combobox", { name: "此刻心情", exact: true })
+    .selectOption("tired");
+  await page
+    .getByRole("combobox", { name: "音乐陪伴方式", exact: true })
+    .selectOption("lift");
+  await expect(title).toHaveText(originalTitle);
+  await page.getByRole("button", { name: "按心情推荐", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "按心情推荐", exact: true }),
+  ).toBeEnabled();
+  const candidates = page.getByRole("region", {
+    name: "本次音乐候选",
+    exact: true,
+  });
+  await expect(
+    candidates.getByRole("button", { name: /^播放候选 / }),
+  ).toHaveCount(5);
+  await expect(title).toHaveText(originalTitle);
+  await expect(quote).toHaveText(originalQuote);
+  const first = candidates.locator(".candidate-copy > strong").first();
+  const firstTitle = await first.innerText();
+  await candidates.getByText("为什么推荐", { exact: true }).first().click();
+  await expect(
+    candidates.locator(".candidate-copy details[open] ul"),
+  ).toBeVisible();
+  await candidates
+    .getByRole("button", { name: `喜欢 ${firstTitle}`, exact: true })
+    .click();
+  await expect(
+    candidates.getByRole("button", {
+      name: `撤销喜欢 ${firstTitle}`,
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-pressed", "true");
+  const history = page.locator(".music-feedback-history");
+  await history.locator("summary").click();
+  await expect(history).toContainText("1 / 200");
+  await history
+    .getByRole("button", { name: "清除本机音乐反馈", exact: true })
+    .click();
+  await expect(
+    history.getByRole("group", { name: "确认清除音乐反馈", exact: true }),
+  ).toBeVisible();
+  await history.getByRole("button", { name: "取消清除", exact: true }).click();
+  await expect(history).toContainText("1 / 200");
+  await history
+    .getByRole("button", { name: "清除本机音乐反馈", exact: true })
+    .click();
+  await history
+    .getByRole("button", { name: "确认清除反馈", exact: true })
+    .click();
+  await expect(history).toContainText("0 / 200");
+  await candidates
+    .getByRole("button", { name: `不喜欢 ${firstTitle}`, exact: true })
+    .click();
+  await expect(
+    candidates.getByRole("button", {
+      name: `播放候选 ${firstTitle}`,
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await history
+    .getByRole("button", { name: `撤销反馈 ${firstTitle}`, exact: true })
+    .click();
+  await expect(
+    candidates.getByRole("button", {
+      name: `播放候选 ${firstTitle}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(quote).toHaveText(originalQuote);
+  await page
+    .getByRole("button", { name: "AI 按今日节奏推荐", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "AI 推荐发送预览", exact: true }),
+  ).toContainText("音乐陪伴方式：提一点精神");
+  await expect(
+    page.getByRole("region", { name: "AI 推荐发送预览", exact: true }),
+  ).toContainText("不发送给 AI");
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  await page.screenshot({
+    path: testInfo.outputPath("music-feedback.png"),
+    fullPage: true,
+  });
+  await testInfo.attach("心情音乐候选与本机反馈", {
+    path: testInfo.outputPath("music-feedback.png"),
+    contentType: "image/png",
+  });
+});
+
+test("持续播放器：在任务页自动下一首，本地导入后跨页保持单一音源", async ({
+  page,
+}, testInfo) => {
+  testInfo.annotations.push({
+    type: "scope",
+    description:
+      "Audio play/pause are event-only test doubles with no sound. This checks renderer lifetime, not OS background audio or real network playback.",
+  });
+  await page.addInitScript(() => {
+    const audios: HTMLAudioElement[] = [];
+    const target = window as Window & {
+      daymateTestAudios?: HTMLAudioElement[];
+    };
+    target.daymateTestAudios = audios;
+    const BaseAudio = window.Audio;
+    window.Audio = class extends BaseAudio {
+      constructor(src?: string) {
+        super(src);
+        audios.push(this);
+      }
+    };
+    HTMLMediaElement.prototype.play = function () {
+      this.dispatchEvent(new Event("play"));
+      return Promise.resolve();
+    };
+    HTMLMediaElement.prototype.pause = function () {
+      this.dispatchEvent(new Event("pause"));
+    };
+  });
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "每日内容", exact: true })
+    .click();
+  const title = page.locator(".music-copy strong");
+  const firstTitle = await title.innerText();
+  await page.getByRole("button", { name: "开启自动连播", exact: true }).click();
+  await page.getByRole("button", { name: "播放音乐", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "暂停音乐", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "任务", exact: true })
+    .click();
+  await page.evaluate(() => {
+    const audios = (
+      window as Window & { daymateTestAudios?: HTMLAudioElement[] }
+    ).daymateTestAudios!;
+    audios[0].dispatchEvent(new Event("ended"));
+  });
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "每日内容", exact: true })
+    .click();
+  await expect(title).not.toHaveText(firstTitle);
+  await expect(
+    page.getByRole("button", { name: "暂停音乐", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as Window & { daymateTestAudios?: HTMLAudioElement[] })
+          .daymateTestAudios!.length,
+    ),
+  ).toBe(1);
+  await page
+    .getByLabel("导入本地歌曲", { exact: true })
+    .setInputFiles("public/music/calm-theme.ogg");
+  await expect(title).toHaveText("calm-theme.ogg");
+  await page.getByRole("button", { name: "播放音乐", exact: true }).click();
+  const localUrl = await page.evaluate(
+    () =>
+      (window as Window & { daymateTestAudios?: HTMLAudioElement[] })
+        .daymateTestAudios![0].src,
+  );
+  expect(localUrl).toMatch(/^blob:/);
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "任务", exact: true })
+    .click();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "每日内容", exact: true })
+    .click();
+  await expect(title).toHaveText("calm-theme.ogg");
+  await expect(
+    page.getByRole("button", { name: "暂停音乐", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as Window & { daymateTestAudios?: HTMLAudioElement[] })
+          .daymateTestAudios![0].src,
+    ),
+  ).toBe(localUrl);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as Window & { daymateTestAudios?: HTMLAudioElement[] })
+          .daymateTestAudios!.length,
+    ),
+  ).toBe(1);
+  await page.getByRole("button", { name: "清空本地歌曲", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "暂停音乐", exact: true }),
+  ).toHaveCount(0);
 });

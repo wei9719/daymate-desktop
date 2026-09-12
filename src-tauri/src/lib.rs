@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, Local, Timelike, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike, Utc};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 mod ai;
@@ -10,6 +10,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{self, Receiver, Sender},
         Arc, Mutex,
     },
     thread,
@@ -18,7 +19,7 @@ use std::{
 use tauri::{
     menu::{ContextMenu, MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Manager, State,
+    Emitter, Manager, State,
 };
 
 const AI_KEYRING_SERVICE: &str = "com.daymate.desktop.ai";
@@ -34,6 +35,9 @@ struct AppState {
     tracking_changed: Arc<AtomicBool>,
     input_counters: Arc<InputCounters>,
     icon_cache: Mutex<HashMap<String, Option<String>>>,
+    flush_requests: Sender<Sender<Result<(), String>>>,
+    exit_in_progress: AtomicBool,
+    exit_flushed: AtomicBool,
 }
 
 #[derive(Default)]
@@ -72,7 +76,7 @@ struct ForegroundApplication {
     executable_path: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 struct SessionMetrics {
     active_seconds: i64,
     idle_seconds: i64,
@@ -117,18 +121,22 @@ fn save_session(
     executable_path: Option<&str>,
     started_at: DateTime<Utc>,
     ended_at: DateTime<Utc>,
-    metrics: SessionMetrics,
-) {
+    metrics: &mut SessionMetrics,
+) -> Result<(), String> {
     if metrics.active_seconds == 0
         && metrics.idle_seconds == 0
         && metrics.mouse_clicks == 0
         && metrics.key_presses == 0
     {
-        return;
+        return Ok(());
     }
-    if let Ok(connection) = Connection::open(path) {
-        let _ = connection.busy_timeout(Duration::from_secs(2));
-        let _ = connection.execute(
+    let connection = Connection::open(path)
+        .map_err(|_| "最后一段活动记录未能保存，请检查数据目录权限或可用空间")?;
+    connection
+        .busy_timeout(Duration::from_secs(2))
+        .map_err(|_| "活动数据库暂时不可用")?;
+    connection
+        .execute(
             "INSERT INTO app_usage_sessions
              (app_name, window_title, executable_path, started_at, ended_at, active_seconds,
               idle_seconds, mouse_clicks, key_presses, created_at)
@@ -144,8 +152,10 @@ fn save_session(
                 metrics.mouse_clicks,
                 metrics.key_presses,
             ],
-        );
-    }
+        )
+        .map_err(|_| "活动记录保存失败，已保留内存记录；请稍后重试退出")?;
+    *metrics = SessionMetrics::default();
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -333,7 +343,7 @@ fn idle_seconds() -> u64 {
     0
 }
 
-fn start_activity_tracker(state: &AppState) {
+fn start_activity_tracker(state: &AppState, flush_requests: Receiver<Sender<Result<(), String>>>) {
     let database_path = state.database_path.clone();
     let tracking_enabled = state.tracking_enabled.clone();
     let title_capture_enabled = state.title_capture_enabled.clone();
@@ -348,10 +358,7 @@ fn start_activity_tracker(state: &AppState) {
         let mut current_executable_path = String::new();
         let mut started_at = Utc::now();
         let mut last_flush = Instant::now();
-        let mut active_seconds = 0i64;
-        let mut inactive_seconds = 0i64;
-        let mut mouse_clicks = 0i64;
-        let mut key_presses = 0i64;
+        let mut metrics = SessionMetrics::default();
         let mut previous_mouse_clicks = input_counters.mouse_clicks.load(Ordering::Relaxed);
         let mut previous_key_presses = input_counters.key_presses.load(Ordering::Relaxed);
         let mut current_day = Local::now().date_naive();
@@ -359,7 +366,11 @@ fn start_activity_tracker(state: &AppState) {
         let mut last_sample = Instant::now();
 
         loop {
-            thread::sleep(Duration::from_secs(3));
+            let flush_reply = match flush_requests.recv_timeout(Duration::from_secs(3)) {
+                Ok(reply) => Some(reply),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            };
             let Ok(_activity_guard) = activity_gate.lock() else {
                 return;
             };
@@ -367,10 +378,7 @@ fn start_activity_tracker(state: &AppState) {
                 current_app.clear();
                 current_title = None;
                 current_executable_path.clear();
-                active_seconds = 0;
-                inactive_seconds = 0;
-                mouse_clicks = 0;
-                key_presses = 0;
+                metrics = SessionMetrics::default();
                 input_counters
                     .pending_mouse_clicks
                     .store(0, Ordering::Relaxed);
@@ -385,6 +393,44 @@ fn start_activity_tracker(state: &AppState) {
                 last_observed = started_at;
                 last_sample = Instant::now();
                 // Do not reintroduce the interval that straddled an explicit deletion.
+                if let Some(reply) = flush_reply {
+                    let _ = reply.send(Ok(()));
+                }
+                continue;
+            }
+            if let Some(reply) = flush_reply {
+                let result = save_session(
+                    &database_path,
+                    &current_app,
+                    title_capture_enabled
+                        .load(Ordering::Acquire)
+                        .then_some(current_title.as_deref())
+                        .flatten(),
+                    (!current_executable_path.is_empty())
+                        .then_some(current_executable_path.as_str()),
+                    started_at,
+                    last_observed.max(started_at),
+                    &mut metrics,
+                );
+                if result.is_ok() {
+                    current_app.clear();
+                    current_title = None;
+                    current_executable_path.clear();
+                    input_counters
+                        .pending_mouse_clicks
+                        .store(0, Ordering::Relaxed);
+                    input_counters
+                        .pending_key_presses
+                        .store(0, Ordering::Relaxed);
+                    started_at = Utc::now();
+                    last_observed = started_at;
+                    last_sample = Instant::now();
+                    last_flush = Instant::now();
+                    current_day = Local::now().date_naive();
+                    previous_mouse_clicks = input_counters.mouse_clicks.load(Ordering::Relaxed);
+                    previous_key_presses = input_counters.key_presses.load(Ordering::Relaxed);
+                }
+                let _ = reply.send(result);
                 continue;
             }
             let observed = Utc::now();
@@ -413,7 +459,7 @@ fn start_activity_tracker(state: &AppState) {
                 )
             {
                 // Flush only the interval observed before pause/sleep/clock changes.
-                save_session(
+                if save_session(
                     &database_path,
                     &current_app,
                     current_title.as_deref(),
@@ -421,20 +467,15 @@ fn start_activity_tracker(state: &AppState) {
                         .then_some(current_executable_path.as_str()),
                     started_at,
                     previous_observed.max(started_at),
-                    SessionMetrics {
-                        active_seconds,
-                        idle_seconds: inactive_seconds,
-                        mouse_clicks,
-                        key_presses,
-                    },
-                );
+                    &mut metrics,
+                )
+                .is_err()
+                {
+                    continue;
+                }
                 current_app.clear();
                 current_title = None;
                 current_executable_path.clear();
-                active_seconds = 0;
-                inactive_seconds = 0;
-                mouse_clicks = 0;
-                key_presses = 0;
                 started_at = observed;
                 last_flush = Instant::now();
                 current_day = Local::now().date_naive();
@@ -464,9 +505,9 @@ fn start_activity_tracker(state: &AppState) {
                 );
                 if !current_app.is_empty() {
                     if is_idle {
-                        inactive_seconds += previous_day_seconds;
+                        metrics.idle_seconds += previous_day_seconds;
                     } else if !current_app.eq_ignore_ascii_case("daymate-desktop.exe") {
-                        active_seconds += previous_day_seconds;
+                        metrics.active_seconds += previous_day_seconds;
                     }
                 }
                 sample_seconds = today_seconds;
@@ -477,7 +518,7 @@ fn start_activity_tracker(state: &AppState) {
                 || day_changed
                 || last_flush.elapsed().as_secs() >= 60
             {
-                save_session(
+                if save_session(
                     &database_path,
                     &current_app,
                     current_title.as_deref(),
@@ -485,21 +526,16 @@ fn start_activity_tracker(state: &AppState) {
                         .then_some(current_executable_path.as_str()),
                     started_at,
                     interval_start.max(started_at),
-                    SessionMetrics {
-                        active_seconds,
-                        idle_seconds: inactive_seconds,
-                        mouse_clicks,
-                        key_presses,
-                    },
-                );
+                    &mut metrics,
+                )
+                .is_err()
+                {
+                    continue;
+                }
                 current_app = app_name.clone();
                 current_title = title.clone();
                 current_executable_path = executable_path.clone();
                 started_at = interval_start;
-                active_seconds = 0;
-                inactive_seconds = 0;
-                mouse_clicks = 0;
-                key_presses = 0;
                 input_counters
                     .pending_mouse_clicks
                     .store(0, Ordering::Relaxed);
@@ -516,22 +552,22 @@ fn start_activity_tracker(state: &AppState) {
                 started_at = interval_start;
             }
             if is_idle {
-                inactive_seconds += sample_seconds;
+                metrics.idle_seconds += sample_seconds;
             } else if !current_app.eq_ignore_ascii_case("daymate-desktop.exe") {
-                active_seconds += sample_seconds;
+                metrics.active_seconds += sample_seconds;
             }
-            mouse_clicks += mouse_delta;
-            key_presses += key_delta;
+            metrics.mouse_clicks += mouse_delta;
+            metrics.key_presses += key_delta;
             input_counters.pending_day.store(
                 local_observed.date_naive().num_days_from_ce() as u64,
                 Ordering::Relaxed,
             );
             input_counters
                 .pending_mouse_clicks
-                .store(mouse_clicks as u64, Ordering::Relaxed);
+                .store(metrics.mouse_clicks as u64, Ordering::Relaxed);
             input_counters
                 .pending_key_presses
-                .store(key_presses as u64, Ordering::Relaxed);
+                .store(metrics.key_presses as u64, Ordering::Relaxed);
         }
     });
 }
@@ -607,42 +643,59 @@ fn application_icon_data_url(
     None
 }
 
-#[tauri::command]
-fn get_today_stats(state: State<'_, AppState>) -> Result<TodayStats, String> {
-    let _activity_guard = state
-        .activity_gate
-        .lock()
-        .map_err(|_| "活动统计暂时不可用")?;
-    let connection = Connection::open(&state.database_path).map_err(|error| error.to_string())?;
+fn parse_activity_date(date: Option<&str>) -> Result<NaiveDate, String> {
+    let Some(date) = date else {
+        return Ok(Local::now().date_naive());
+    };
+    let parsed = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map_err(|_| "请选择有效的回顾日期".to_string())?;
+    if parsed.format("%Y-%m-%d").to_string() != date || !(1970..=9998).contains(&parsed.year()) {
+        return Err("请选择有效的回顾日期".into());
+    }
+    Ok(parsed)
+}
+
+fn query_activity_stats(
+    connection: &Connection,
+    date: NaiveDate,
+) -> Result<(TodayStats, Vec<Option<String>>), String> {
     // A local midnight can be ambiguous or nonexistent on DST transition dates.
     // Keep the indexed candidate interval small, then let SQLite match the local date.
-    let local_now = Local::now();
-    let today = local_now.format("%Y-%m-%d").to_string();
-    let start = (Utc::now() - chrono::Duration::days(2)).to_rfc3339();
-    let end = (Utc::now() + chrono::Duration::days(2)).to_rfc3339();
+    let day = date.format("%Y-%m-%d").to_string();
+    let midnight = date.and_hms_opt(0, 0, 0).ok_or("无效回顾日期")?.and_utc();
+    let start = (midnight - chrono::Duration::days(2)).to_rfc3339();
+    let end = (midnight + chrono::Duration::days(2)).to_rfc3339();
     let (
         active_seconds,
         idle_seconds_total,
-        app_switches,
         stored_mouse_clicks,
         stored_key_presses,
-    ): (i64, i64, i64, i64, i64) = connection
+    ): (i64, i64, i64, i64) = connection
             .query_row(
-                "SELECT COALESCE(SUM(active_seconds), 0), COALESCE(SUM(idle_seconds), 0), COUNT(*),
+                "SELECT COALESCE(SUM(active_seconds), 0), COALESCE(SUM(idle_seconds), 0),
                     COALESCE(SUM(mouse_clicks), 0), COALESCE(SUM(key_presses), 0)
              FROM app_usage_sessions WHERE started_at >= ?1 AND started_at < ?2 AND date(started_at, 'localtime') = ?3",
-                [&start, &end, &today],
+                [&start, &end, &day],
                 |row| {
                     Ok((
                         row.get(0)?,
                         row.get(1)?,
                         row.get(2)?,
                         row.get(3)?,
-                        row.get(4)?,
                     ))
                 },
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| "活动统计暂时无法读取，请稍后重试".to_string())?;
+    // Count observed foreground-app changes within this local day, including changes
+    // during idle periods. A minute flush, title change or idle transition alone is
+    // not an app change. The day's first observed app has no predecessor.
+    let app_switches: i64 = connection.query_row(
+        "SELECT COALESCE(SUM(CASE WHEN previous_app IS NOT NULL AND app_name <> previous_app COLLATE NOCASE THEN 1 ELSE 0 END), 0)
+         FROM (SELECT app_name, LAG(app_name) OVER (ORDER BY started_at, id) AS previous_app
+           FROM app_usage_sessions WHERE started_at >= ?1 AND started_at < ?2
+           AND date(started_at, 'localtime') = ?3 AND LENGTH(TRIM(app_name)) > 0)",
+        [&start, &end, &day], |row| row.get(0),
+    ).map_err(|_| "应用切换统计暂时无法读取".to_string())?;
     let mut statement = connection
         .prepare(
             "SELECT app_name, SUM(active_seconds) AS seconds,
@@ -650,47 +703,74 @@ fn get_today_stats(state: State<'_, AppState>) -> Result<TodayStats, String> {
              FROM app_usage_sessions WHERE started_at >= ?1 AND started_at < ?2 AND date(started_at, 'localtime') = ?3
              GROUP BY app_name HAVING SUM(active_seconds) > 0 ORDER BY seconds DESC LIMIT 100",
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|_| "应用统计暂时无法读取，请稍后重试".to_string())?;
     let application_rows: Vec<(String, i64, Option<String>)> = statement
-        .query_map([&start, &end, &today], |row| {
+        .query_map([&start, &end, &day], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
-        .map_err(|error| error.to_string())?
-        .filter_map(Result::ok)
-        .collect();
-    let (pending_mouse, pending_keys) = pending_counts_for_day(
-        &state.input_counters,
-        local_now.date_naive().num_days_from_ce() as u64,
-    );
-    let mouse_clicks = stored_mouse_clicks + pending_mouse;
-    let key_presses = stored_key_presses + pending_keys;
+        .map_err(|_| "应用统计查询失败".to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|_| "应用记录格式无效，未修改原数据".to_string())?;
+    let (top_apps, paths): (Vec<_>, Vec<_>) = application_rows
+        .into_iter()
+        .map(|(app_name, seconds, path)| {
+            (
+                AppUsage {
+                    app_name,
+                    seconds,
+                    icon_data_url: None,
+                },
+                path,
+            )
+        })
+        .unzip();
+    Ok((
+        TodayStats {
+            active_seconds,
+            idle_seconds: idle_seconds_total,
+            app_switches,
+            mouse_clicks: stored_mouse_clicks,
+            key_presses: stored_key_presses,
+            last_input_seconds_ago: 0,
+            current_app: None,
+            top_apps,
+        },
+        paths,
+    ))
+}
+
+#[tauri::command]
+fn get_today_stats(state: State<'_, AppState>, date: Option<String>) -> Result<TodayStats, String> {
+    let date = parse_activity_date(date.as_deref())?;
+    let _activity_guard = state
+        .activity_gate
+        .lock()
+        .map_err(|_| "活动统计暂时不可用")?;
+    let connection =
+        Connection::open(&state.database_path).map_err(|_| "无法读取本地活动数据库")?;
+    connection
+        .busy_timeout(Duration::from_secs(2))
+        .map_err(|_| "活动数据库暂时不可用")?;
+    let (mut stats, paths) = query_activity_stats(&connection, date)?;
+    let (pending_mouse, pending_keys) =
+        pending_counts_for_day(&state.input_counters, date.num_days_from_ce() as u64);
+    stats.mouse_clicks += pending_mouse;
+    stats.key_presses += pending_keys;
     // Icon extraction can touch slow disks: never hold the sampler/settings lock here.
-    drop(statement);
     drop(connection);
     drop(_activity_guard);
-    let top_apps = application_rows
-        .into_iter()
-        .map(|(app_name, seconds, executable_path)| AppUsage {
-            app_name,
-            seconds,
-            icon_data_url: application_icon_data_url(executable_path.as_deref(), &state.icon_cache),
-        })
-        .collect();
-    let current_app = state
-        .tracking_enabled
-        .load(Ordering::Acquire)
-        .then(|| foreground_application(false).map(|value| value.app_name))
-        .flatten();
-    Ok(TodayStats {
-        active_seconds,
-        idle_seconds: idle_seconds_total,
-        app_switches,
-        mouse_clicks,
-        key_presses,
-        last_input_seconds_ago: idle_seconds() as i64,
-        current_app,
-        top_apps,
-    })
+    for (app, path) in stats.top_apps.iter_mut().zip(paths) {
+        app.icon_data_url = application_icon_data_url(path.as_deref(), &state.icon_cache);
+    }
+    if date == Local::now().date_naive() {
+        stats.current_app = state
+            .tracking_enabled
+            .load(Ordering::Acquire)
+            .then(|| foreground_application(false).map(|value| value.app_name))
+            .flatten();
+        stats.last_input_seconds_ago = idle_seconds() as i64;
+    }
+    Ok(stats)
 }
 
 #[tauri::command]
@@ -878,6 +958,7 @@ async fn recommend_music_with_ai(
     base_url: String,
     model: String,
     preferred_category: String,
+    intent: String,
     scene: String,
     mood: String,
     hour: u8,
@@ -900,6 +981,7 @@ async fn recommend_music_with_ai(
             },
             ai::MusicContext {
                 preferred_category,
+                intent,
                 scene,
                 mood,
                 hour,
@@ -999,6 +1081,7 @@ pub fn run() {
             app.handle().plugin(system::autostart_plugin(&data_dir))?;
             let database_path = data_dir.join("daymate.sqlite3");
             initialize_database(&database_path).map_err(std::io::Error::other)?;
+            let (flush_requests, flush_receiver) = mpsc::channel();
             let state = AppState {
                 ai: Arc::new(ai::AiRuntime::default()),
                 database_path,
@@ -1010,9 +1093,12 @@ pub fn run() {
                 tracking_changed: Arc::new(AtomicBool::new(false)),
                 input_counters: Arc::new(InputCounters::default()),
                 icon_cache: Mutex::new(HashMap::new()),
+                flush_requests,
+                exit_in_progress: AtomicBool::new(false),
+                exit_flushed: AtomicBool::new(false),
             };
             start_input_counter(state.input_counters.clone(), state.tracking_enabled.clone());
-            start_activity_tracker(&state);
+            start_activity_tracker(&state, flush_receiver);
             app.manage(state);
 
             let show_item = MenuItemBuilder::with_id("show", "显示主窗口").build(app)?;
@@ -1077,14 +1163,218 @@ pub fn run() {
             system::send_test_notification,
             system::send_focus_completed_notification
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running DayMate");
+        .build(tauri::generate_context!())
+        .expect("error while building DayMate")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                // The single-instance plugin may exit a second launch before setup.
+                let Some(state) = app.try_state::<AppState>() else {
+                    return;
+                };
+                if state.exit_flushed.load(Ordering::Acquire) {
+                    return;
+                }
+                api.prevent_exit();
+                if state.exit_in_progress.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                let app = app.clone();
+                thread::spawn(move || {
+                    let state = app.state::<AppState>();
+                    let (reply, result) = mpsc::channel();
+                    let saved = state
+                        .flush_requests
+                        .send(reply)
+                        .map_err(|_| "活动记录线程暂时不可用，尚未退出".to_string())
+                        .and_then(|()| {
+                            result.recv_timeout(Duration::from_secs(6)).map_err(|_| {
+                                "正在等待活动记录保存，尚未退出；请稍后重试".to_string()
+                            })
+                        })
+                        .and_then(|result| result);
+                    match saved {
+                        Ok(()) => {
+                            state.tracking_enabled.store(false, Ordering::Release);
+                            state.exit_flushed.store(true, Ordering::Release);
+                            app.exit(0);
+                        }
+                        Err(message) => {
+                            state.exit_in_progress.store(false, Ordering::Release);
+                            show_main_window(&app);
+                            let _ = app.emit_to("main", "activity-save-error", message);
+                        }
+                    }
+                });
+            }
+        });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn activity_test_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "daymate-{label}-{}.sqlite3",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn historical_queries_select_local_day_and_reject_invalid_dates() {
+        let path = activity_test_path("history");
+        initialize_database(&path).unwrap();
+        let first = Local
+            .with_ymd_and_hms(2026, 9, 10, 12, 0, 0)
+            .unwrap()
+            .with_timezone(&Utc);
+        let second = Local
+            .with_ymd_and_hms(2026, 9, 11, 12, 0, 0)
+            .unwrap()
+            .with_timezone(&Utc);
+        for (start, seconds) in [(first, 30), (second, 90)] {
+            let mut metrics = SessionMetrics {
+                active_seconds: seconds,
+                mouse_clicks: 7,
+                key_presses: 11,
+                ..Default::default()
+            };
+            save_session(
+                &path,
+                "test.exe",
+                None,
+                None,
+                start,
+                start + chrono::Duration::seconds(seconds),
+                &mut metrics,
+            )
+            .unwrap();
+        }
+        let db = Connection::open(&path).unwrap();
+        let (first_stats, _) =
+            query_activity_stats(&db, parse_activity_date(Some("2026-09-10")).unwrap()).unwrap();
+        let (second_stats, _) =
+            query_activity_stats(&db, parse_activity_date(Some("2026-09-11")).unwrap()).unwrap();
+        assert_eq!(first_stats.active_seconds, 30);
+        assert_eq!(second_stats.active_seconds, 90);
+        assert_eq!(
+            (second_stats.mouse_clicks, second_stats.key_presses),
+            (7, 11)
+        );
+        assert!(second_stats.current_app.is_none());
+        assert_eq!(second_stats.top_apps[0].seconds, 90);
+        assert_eq!(second_stats.app_switches, 0);
+        // Periodic flushes and differently cased executable names are the same app;
+        // empty names are ignored, while an observed change during idle still counts.
+        for (offset, name, active, idle) in [
+            (120, "TEST.exe", 20, 0),
+            (180, "", 0, 10),
+            (240, "other.exe", 0, 30),
+            (300, "other.exe", 20, 0),
+            (360, "test.exe", 20, 0),
+        ] {
+            let started = second + chrono::Duration::seconds(offset);
+            let mut metrics = SessionMetrics {
+                active_seconds: active,
+                idle_seconds: idle,
+                ..Default::default()
+            };
+            save_session(
+                &path,
+                name,
+                None,
+                None,
+                started,
+                started + chrono::Duration::seconds(active + idle),
+                &mut metrics,
+            )
+            .unwrap();
+        }
+        let (updated, _) =
+            query_activity_stats(&db, parse_activity_date(Some("2026-09-11")).unwrap()).unwrap();
+        assert_eq!(updated.app_switches, 2);
+        assert_eq!(updated.idle_seconds, 40);
+        assert_eq!(
+            query_activity_stats(&db, parse_activity_date(Some("2026-09-10")).unwrap())
+                .unwrap()
+                .0
+                .app_switches,
+            0
+        );
+        for invalid in [
+            "2026-9-10",
+            "2026-02-30",
+            "2026-09-10' OR 1=1",
+            "",
+            "0000-01-01",
+        ] {
+            assert!(parse_activity_date(Some(invalid)).is_err());
+        }
+        drop(db);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn flushing_short_sessions_is_idempotent_and_keeps_buffer_on_failure() {
+        let path = activity_test_path("flush");
+        initialize_database(&path).unwrap();
+        let start = Utc::now();
+        let original = SessionMetrics {
+            active_seconds: 18,
+            mouse_clicks: 3,
+            key_presses: 9,
+            idle_seconds: 0,
+        };
+        let mut metrics = original;
+        save_session(
+            &path,
+            "test.exe",
+            None,
+            None,
+            start,
+            start + chrono::Duration::seconds(18),
+            &mut metrics,
+        )
+        .unwrap();
+        assert_eq!(metrics, SessionMetrics::default());
+        save_session(
+            &path,
+            "test.exe",
+            None,
+            None,
+            start,
+            start + chrono::Duration::seconds(18),
+            &mut metrics,
+        )
+        .unwrap();
+        let db = Connection::open(&path).unwrap();
+        assert_eq!(
+            db.query_row(
+                "SELECT COUNT(*), SUM(active_seconds), SUM(key_presses) FROM app_usage_sessions",
+                [],
+                |row| Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?
+                ))
+            )
+            .unwrap(),
+            (1, 18, 9)
+        );
+        let missing = path.join("missing.sqlite3");
+        metrics = original;
+        assert!(
+            save_session(&missing, "test.exe", None, None, start, start, &mut metrics).is_err()
+        );
+        assert_eq!(metrics, original);
+        drop(db);
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn sample_duration_uses_monotonic_time_and_rejects_sleep_or_clock_jumps() {

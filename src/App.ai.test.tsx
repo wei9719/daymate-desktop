@@ -13,6 +13,9 @@ import App, { ContentPage, FocusModal, SettingsPage } from "./App";
 import * as native from "./native";
 import * as system from "./services/system";
 import { useAppStore } from "./store";
+import { useMusicPreferenceStore } from "./musicStore";
+import { useFocusStore } from "./focusStore";
+import { disposeMusicPlayback } from "./features/music/playback";
 import { hideMainToCompanion } from "./windows";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -54,16 +57,28 @@ vi.mock("./services/system", () => ({
 }));
 vi.mock("./services/music", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./services/music")>()),
-  recommendMusic: vi.fn(async () => ({
-    id: "test-track",
-    title: "测试曲目",
-    artist: "测试音乐人",
-    scene: "安静",
-    reason: "本地测试",
-    audioUrl: "/music/calm-theme.ogg",
-    sourceUrl: "https://example.com",
-    license: "CC0",
-    source: "OpenGameArt",
+  recommendMusicBatch: vi.fn(async () => ({
+    tracks: [
+      {
+        id: "local-test-track",
+        title: "测试曲目",
+        artist: "测试音乐人",
+        scene: "安静",
+        reason: "本地测试",
+        audioUrl: "/music/calm-theme.ogg",
+        sourceUrl: "https://opengameart.org/",
+        license: "CC0",
+        source: "OpenGameArt",
+      },
+    ],
+    trace: {
+      algorithmVersion: "test-v1",
+      source: "offline",
+      candidateCount: 1,
+      excludedCount: 0,
+      repeatRelaxed: false,
+      moodFilterRelaxed: false,
+    },
   })),
 }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -91,6 +106,9 @@ vi.mock("./windows", () => ({
 const initialPreferences = { ...useAppStore.getState().preferences };
 
 beforeEach(() => {
+  disposeMusicPlayback();
+  useFocusStore.getState().dismiss();
+  useMusicPreferenceStore.setState({ feedback: [], recentIds: [] });
   vi.clearAllMocks();
   vi.mocked(isTauri).mockReturnValue(true);
   vi.mocked(native.getAiKeyStatus).mockResolvedValue({
@@ -134,6 +152,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  disposeMusicPlayback();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -590,6 +609,18 @@ describe("场景音乐与独立鼓励交互", () => {
     await act(async () => undefined);
   });
   it("音乐预览完整展示场景心情，AI类别只用于本次播放且不改好句", async () => {
+    useMusicPreferenceStore.setState({
+      feedback: [
+        {
+          id: "local-feedback-only",
+          title: "本机喜好",
+          artist: "测试",
+          category: "focus",
+          rating: "like",
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
     const view = render(<ContentPage />);
     const quote = view.container.querySelector(".quote h2")?.textContent;
     fireEvent.change(screen.getByRole("combobox", { name: "当前场景" }), {
@@ -598,10 +629,14 @@ describe("场景音乐与独立鼓励交互", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "此刻心情" }), {
       target: { value: "tense" },
     });
+    fireEvent.change(screen.getByRole("combobox", { name: "音乐陪伴方式" }), {
+      target: { value: "lift" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /AI 按今日节奏推荐/ }));
     await screen.findByText("确认本次发送内容");
     expect(screen.getByText("场景：专心做事")).toBeInTheDocument();
     expect(screen.getByText("心情：有点紧绷")).toBeInTheDocument();
+    expect(screen.getByText("音乐陪伴方式：提一点精神")).toBeInTheDocument();
     expect(screen.getByText(/本地时段：\d+ 点/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认推荐" }));
     await screen.findByText(/AI 推荐 ·/);
@@ -609,9 +644,16 @@ describe("场景音乐与独立鼓励交互", () => {
       expect.objectContaining({
         scene: "focus",
         mood: "tense",
+        intent: "lift",
         hour: expect.any(Number),
       }),
     );
+    expect(
+      vi.mocked(native.recommendMusicWithAi).mock.calls[0][0],
+    ).not.toHaveProperty("feedback");
+    expect(
+      vi.mocked(native.recommendMusicWithAi).mock.calls[0][0],
+    ).not.toHaveProperty("recentIds");
     expect(useAppStore.getState().preferences.musicCategory).toBe("smart");
     expect(screen.getByRole("button", { name: "轻柔专注" })).toHaveClass(
       "active",
@@ -675,12 +717,16 @@ describe("场景音乐与独立鼓励交互", () => {
     fireEvent.click(screen.getByRole("button", { name: "给我一句鼓励" }));
     fireEvent.click(screen.getByRole("button", { name: "确认生成鼓励" }));
     await screen.findByText("按自己的节奏开始就好。");
+    fireEvent.change(screen.getByRole("combobox", { name: "音乐陪伴方式" }), {
+      target: { value: "lift" },
+    });
+    expect(screen.getByText("按自己的节奏开始就好。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "国风民乐" }));
     expect(screen.getByText("按自己的节奏开始就好。")).toBeInTheDocument();
     expect(native.generateEncouragement).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["search", "same-category"])(
+  it.each(["search", "same-category", "intent"])(
     "手动%s后旧AI音乐结果不能覆盖新意图，结束后能再次推荐",
     async (action) => {
       let finish!: (response: native.AiMusicResponse) => void;
@@ -701,6 +747,11 @@ describe("场景音乐与独立鼓励交互", () => {
           { target: { value: "我选择的歌曲" } },
         );
         fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+      } else if (action === "intent") {
+        fireEvent.change(
+          screen.getByRole("combobox", { name: "音乐陪伴方式" }),
+          { target: { value: "lift" } },
+        );
       } else {
         fireEvent.click(screen.getByRole("button", { name: "智能推荐" }));
       }

@@ -12,6 +12,7 @@ import {
   currentCompanionContext,
   type CompanionContext,
 } from "./companionContext";
+import { planMusic, type MusicIntent } from "./musicRanking";
 
 function matchesAiConnection(
   request: Pick<
@@ -41,11 +42,12 @@ function matchesContext(request: CompanionContext, context?: CompanionContext) {
 export function matchesAiMusicPreferences(
   request: AiMusicRequest,
   preferences: Preferences,
-  context?: CompanionContext,
+  context?: CompanionContext & { intent?: MusicIntent },
 ) {
   return (
     matchesAiConnection(request, preferences) &&
     matchesContext(request, context) &&
+    (!context || request.intent === (context.intent ?? "match")) &&
     request.preferredCategory === preferences.musicCategory &&
     request.maxDailyCalls ===
       normalizeAiDailyLimit(preferences.aiMaxDailyCalls) &&
@@ -57,7 +59,9 @@ export async function prepareAiMusicRequest(
   preferences: Preferences,
   getActiveSeconds: () => Promise<number>,
   getUnfinishedCount: () => number,
-  context = currentCompanionContext(),
+  context: CompanionContext & {
+    intent?: MusicIntent;
+  } = currentCompanionContext(),
 ): Promise<AiMusicRequest> {
   const shareSummary = preferences.aiShareActivitySummary;
   return {
@@ -73,6 +77,7 @@ export async function prepareAiMusicRequest(
     unfinishedTasks: shareSummary ? getUnfinishedCount() : null,
     scene: context.scene,
     mood: context.mood,
+    intent: context.intent ?? "match",
     hour: context.hour,
   };
 }
@@ -106,20 +111,12 @@ export async function resolveAiMusicRecommendation(
     const preferred = musicCategories.find(
       (item) => item.id === request.preferredCategory,
     );
-    const category =
-      preferred && preferred.id !== "smart"
-        ? preferred.id
-        : request.scene === "sleep" ||
-            request.scene === "rest" ||
-            request.scene === "relax" ||
-            request.mood === "tense" ||
-            request.mood === "tired"
-          ? "ambient"
-          : request.scene === "focus" ||
-              request.scene === "start" ||
-              (hour >= 9 && hour < 18)
-            ? "focus"
-            : "ambient";
+    const category = planMusic(preferred?.id ?? "smart", false, hour, {
+      scene: request.scene,
+      mood: request.mood,
+      hour,
+      intent: request.intent,
+    }).category;
     return {
       category,
       reason:

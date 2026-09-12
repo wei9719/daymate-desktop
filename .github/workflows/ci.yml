@@ -46,6 +46,8 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test
+      - name: Report versioned synthetic music evaluation (not user satisfaction)
+        run: npm run eval:music
       - run: node --test scripts/test-release.mjs scripts/test-audit-rust.mjs scripts/test-check-sarif.mjs
       - run: npm run build
       - run: npm run version:check

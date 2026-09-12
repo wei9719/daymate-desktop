@@ -10,7 +10,6 @@ import {
   Heart,
   Home,
   ListTodo,
-  LoaderCircle,
   GripHorizontal,
   Minimize2,
   Music2,
@@ -19,15 +18,12 @@ import {
   Play,
   Plus,
   RotateCcw,
-  Repeat1,
   Settings,
   ShieldCheck,
-  Shuffle,
   Sparkles,
   Trash2,
   X,
 } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { isTauri } from "@tauri-apps/api/core";
 import {
   Bar,
@@ -42,20 +38,20 @@ import {
   YAxis,
 } from "recharts";
 import { getDailyContent } from "./data/dailyContent";
+import { musicCategories, type MusicCategory } from "./services/music";
 import {
-  musicCategories,
-  musicEndAction,
-  nextMusicOffset,
-  recommendMusic,
-  type MusicCategory,
-  type SmartTrack,
-} from "./services/music";
+  SmartMusicPlayer,
+  MusicFeedbackPanel,
+} from "./features/music/SmartMusicPlayer";
+import { LocalMusicImport } from "./features/music/LocalMusicImport";
 import {
-  createSafeLocalAudioBlob,
-  LocalAudioImportError,
-  localAudioAccept,
-} from "./services/localAudio";
+  getMusicPlayback,
+  musicStateKey,
+  useMusicPlayback,
+} from "./features/music/playback";
+import type { MusicIntent } from "./services/musicRanking";
 import { getDailyTheme } from "./services/dailyTheme";
+import { localDateKey, yesterdayDateKey } from "./services/activityDates";
 import { aiProviders, findAiProvider } from "./services/aiProviders";
 import {
   matchesAiMusicPreferences,
@@ -81,10 +77,11 @@ import {
   getSystemIntegrationStatus,
   setSystemAutostart,
   sendTestNotification,
-  sendFocusCompletedNotification,
 } from "./services/system";
 import { version as appVersion } from "../package.json";
 import { selectNextTask, useAppStore } from "./store";
+import { useFocusStore } from "./focusStore";
+import { useFocusClock } from "./useFocusClock";
 import {
   deleteAiKey,
   deleteNativeActivity,
@@ -113,7 +110,7 @@ import type {
   CompanionMood,
 } from "./types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { emit, listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import {
   hideCompanion,
   hideMainToCompanion,
@@ -130,21 +127,6 @@ const navItems: { id: Page; label: string; icon: typeof Home }[] = [
   { id: "privacy", label: "数据与隐私", icon: ShieldCheck },
   { id: "settings", label: "设置", icon: Settings },
 ];
-
-let sharedMusicAudio: HTMLAudioElement | undefined;
-let sharedMusicTrack: SmartTrack | undefined;
-const musicStateKey = "daymate-music-playing";
-
-function publishMusicState(playing: boolean) {
-  localStorage.setItem(musicStateKey, String(playing));
-  emit("music-state", { playing }).catch(() => undefined);
-}
-
-function getSharedMusicAudio() {
-  sharedMusicAudio ??= new Audio();
-  sharedMusicAudio.preload = "metadata";
-  return sharedMusicAudio;
-}
 
 function greeting() {
   const hour = new Date().getHours();
@@ -389,37 +371,32 @@ export function FocusModal({
       state.tasks.find((item) => item.id === task.id)?.completed ??
       task.completed,
   );
-  const [seconds, setSeconds] = useState(task.estimatedMinutes * 60);
-  const [running, setRunning] = useState(true);
-  const [ended, setEnded] = useState(false);
-  const [notificationStatus, setNotificationStatus] = useState("");
-  const notificationSent = useRef(false);
-  const notifyCompletion = useCallback(() => {
-    if (notificationSent.current) return;
-    notificationSent.current = true;
-    if (!useAppStore.getState().preferences.notifications) return;
-    sendFocusCompletedNotification().catch(() =>
-      setNotificationStatus(
-        "专注已经完成，系统通知未能发送。可以稍后在设置中测试通知。",
-      ),
-    );
-  }, []);
+  const { session, seconds, error: notificationStatus } = useFocusClock();
+  const [saveError, setSaveError] = useState("");
+  const actOnSession = (action: () => void) => {
+    try {
+      action();
+      setSaveError("");
+    } catch {
+      setSaveError("专注状态保存失败，请检查可用空间后重试。");
+    }
+  };
   useEffect(() => {
-    if (!running || seconds <= 0) return;
-    const timer = window.setInterval(() => {
-      setSeconds((value) => Math.max(0, value - 1));
-      if (seconds <= 1) {
-        setRunning(false);
-        setEnded(true);
-        notifyCompletion();
-      }
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [running, seconds, notifyCompletion]);
-  const progress = 1 - seconds / (task.estimatedMinutes * 60);
+    if (useFocusStore.getState().session?.taskId !== task.id)
+      useFocusStore.getState().start(task);
+  }, [task]);
+  const running = session?.status === "running";
+  const ended = session?.status === "completed";
+  const progress =
+    1 - seconds / (session?.durationSeconds ?? task.estimatedMinutes * 60);
   return (
     <div className="focus-overlay">
-      <button className="icon-button focus-close" onClick={onClose}>
+      <button
+        className="icon-button focus-close"
+        onClick={onClose}
+        aria-label="收起专注，保留计时"
+        title="收起专注，保留计时"
+      >
         <X />
       </button>
       <div className="focus-content">
@@ -447,13 +424,27 @@ export function FocusModal({
         </div>
         <div className="focus-actions">
           {ended ? (
-            <button className="button secondary" onClick={onClose}>
+            <button
+              className="button secondary"
+              onClick={() =>
+                actOnSession(() => {
+                  useFocusStore.getState().dismiss();
+                  onClose();
+                })
+              }
+            >
               回到今天
             </button>
           ) : (
             <button
               className="button secondary"
-              onClick={() => setRunning(!running)}
+              onClick={() =>
+                actOnSession(() =>
+                  running
+                    ? useFocusStore.getState().pause()
+                    : useFocusStore.getState().resume(),
+                )
+              }
             >
               {running ? <Pause /> : <Play />}
               {running ? "暂停" : "继续"}
@@ -462,23 +453,39 @@ export function FocusModal({
           {!taskCompleted && (
             <button
               className="button primary"
-              onClick={() => {
-                if (
-                  !useAppStore
-                    .getState()
-                    .tasks.find((item) => item.id === task.id)?.completed
-                )
-                  toggleTask(task.id);
-                setRunning(false);
-                setEnded(true);
-                notifyCompletion();
-              }}
+              onClick={() =>
+                actOnSession(() => {
+                  if (
+                    !useAppStore
+                      .getState()
+                      .tasks.find((item) => item.id === task.id)?.completed
+                  )
+                    toggleTask(task.id);
+                  useFocusStore.getState().complete();
+                })
+              }
             >
               <Check />
               完成任务
             </button>
           )}
+          {!ended && (
+            <button
+              className="button secondary"
+              onClick={() => {
+                if (window.confirm("结束本次专注吗？任务不会被标记完成。"))
+                  actOnSession(() => {
+                    useFocusStore.getState().dismiss();
+                    onClose();
+                  });
+              }}
+            >
+              结束本次专注
+            </button>
+          )}
         </div>
+        <p>收起后仍会按时间计时；离开电脑想暂停时，请先点击“暂停”。</p>
+        {saveError && <p role="alert">{saveError}</p>}
         {notificationStatus && <p role="status">{notificationStatus}</p>}
       </div>
     </div>
@@ -529,287 +536,7 @@ function TaskRow({
   );
 }
 
-function SmartMusicPlayer({
-  compact = false,
-  baseOffset = 0,
-  category,
-  search = "",
-}: {
-  compact?: boolean;
-  baseOffset?: number;
-  category?: MusicCategory;
-  search?: string;
-}) {
-  const hasTasks = useAppStore((state) =>
-    state.tasks.some((task) => !task.completed),
-  );
-  const preferredCategory = useAppStore(
-    (state) => state.preferences.musicCategory,
-  );
-  const musicAutoplay = useAppStore((state) => state.preferences.musicAutoplay);
-  const musicPlayMode = useAppStore((state) => state.preferences.musicPlayMode);
-  const updatePreferences = useAppStore((state) => state.updatePreferences);
-  const firstRecommendation = useRef(true);
-  const pendingAutoplay = useRef(false);
-  const autoplayRef = useRef(musicAutoplay);
-  const playModeRef = useRef(musicPlayMode);
-  const [offset, setOffset] = useState(0);
-  const [track, setTrack] = useState<SmartTrack | undefined>(sharedMusicTrack);
-  const [loading, setLoading] = useState(!sharedMusicTrack);
-  const [error, setError] = useState("");
-  const [playing, setPlaying] = useState(
-    Boolean(sharedMusicAudio && !sharedMusicAudio.paused),
-  );
-  const [currentTime, setCurrentTime] = useState(
-    sharedMusicAudio?.currentTime ?? 0,
-  );
-  const [duration, setDuration] = useState(sharedMusicAudio?.duration ?? 0);
-
-  useEffect(() => {
-    autoplayRef.current = musicAutoplay;
-    playModeRef.current = musicPlayMode;
-  }, [musicAutoplay, musicPlayMode]);
-
-  useEffect(() => {
-    const audio = getSharedMusicAudio();
-    const syncTime = () => setCurrentTime(audio.currentTime);
-    const syncDuration = () => setDuration(audio.duration);
-    const markPlaying = () => {
-      setPlaying(true);
-      publishMusicState(true);
-    };
-    const markPaused = () => {
-      setPlaying(false);
-      publishMusicState(false);
-    };
-    const playNext = () => {
-      const action = musicEndAction(playModeRef.current, autoplayRef.current);
-      if (action === "repeat") {
-        audio.currentTime = 0;
-        audio.play().catch(() => publishMusicState(false));
-        return;
-      }
-      if (action === "stop") {
-        publishMusicState(false);
-        return;
-      }
-      pendingAutoplay.current = true;
-      setLoading(true);
-      setError("");
-      setPlaying(false);
-      setCurrentTime(0);
-      setDuration(0);
-      setOffset((value) => value + nextMusicOffset(playModeRef.current));
-    };
-    audio.addEventListener("timeupdate", syncTime);
-    audio.addEventListener("loadedmetadata", syncDuration);
-    audio.addEventListener("play", markPlaying);
-    audio.addEventListener("pause", markPaused);
-    audio.addEventListener("ended", playNext);
-    return () => {
-      audio.removeEventListener("timeupdate", syncTime);
-      audio.removeEventListener("loadedmetadata", syncDuration);
-      audio.removeEventListener("play", markPlaying);
-      audio.removeEventListener("pause", markPaused);
-      audio.removeEventListener("ended", playNext);
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    const audio = getSharedMusicAudio();
-    if (firstRecommendation.current && sharedMusicTrack && !audio.paused) {
-      firstRecommendation.current = false;
-      return () => {
-        active = false;
-      };
-    }
-    firstRecommendation.current = false;
-    recommendMusic(
-      baseOffset + offset,
-      hasTasks,
-      new Date().getHours(),
-      category ?? preferredCategory,
-      search,
-    )
-      .then(async (next) => {
-        if (!active) return;
-        const resumePlayback = pendingAutoplay.current;
-        pendingAutoplay.current = false;
-        audio.pause();
-        if (audio.src !== new URL(next.audioUrl, window.location.href).href) {
-          audio.src = next.audioUrl;
-        }
-        sharedMusicTrack = next;
-        setPlaying(false);
-        setCurrentTime(0);
-        setDuration(0);
-        setTrack(next);
-        if (resumePlayback) {
-          try {
-            await audio.play();
-          } catch {
-            setError("下一首加载完成，但自动播放被系统阻止，请点击播放。");
-          }
-        }
-      })
-      .catch((reason: unknown) => {
-        if (active)
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "开放曲库暂时无法连接，本地推荐仍可正常播放。",
-          );
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [baseOffset, category, hasTasks, offset, preferredCategory, search]);
-
-  const togglePlayback = async () => {
-    const audio = getSharedMusicAudio();
-    if (!audio.src && track) {
-      audio.src = track.audioUrl;
-      sharedMusicTrack = track;
-    }
-    if (audio.paused) {
-      try {
-        await audio.play();
-        setPlaying(true);
-      } catch {
-        setError("暂时无法播放这首音乐，请换一首试试。");
-      }
-    } else {
-      audio.pause();
-      setPlaying(false);
-    }
-  };
-
-  const nextTrack = () => {
-    const audio = getSharedMusicAudio();
-    pendingAutoplay.current = !audio.paused;
-    audio.pause();
-    setLoading(true);
-    setError("");
-    setPlaying(false);
-    setCurrentTime(0);
-    setDuration(0);
-    setOffset((value) => value + nextMusicOffset(musicPlayMode));
-  };
-  if (loading)
-    return (
-      <div className={`smart-music ${compact ? "compact" : ""}`}>
-        <LoaderCircle className="spin" />
-        <div>
-          <strong>正在挑一首合适的音乐</strong>
-          <span>从开放音乐库加载中…</span>
-        </div>
-      </div>
-    );
-  if (!track || error)
-    return (
-      <div className={`smart-music ${compact ? "compact" : ""}`}>
-        <Music2 />
-        <div>
-          <strong>{error || "暂时没有音乐"}</strong>
-          <span>不会影响其他功能</span>
-        </div>
-        <button className="icon-button" onClick={nextTrack}>
-          <RotateCcw size={16} />
-        </button>
-      </div>
-    );
-  return (
-    <div className={`smart-music ${compact ? "compact" : ""}`}>
-      <button
-        className="music-play"
-        onClick={togglePlayback}
-        aria-label={playing ? "暂停音乐" : "播放音乐"}
-      >
-        {playing ? <Pause size={18} /> : <Play size={18} />}
-      </button>
-      <div className="music-copy">
-        <strong>{track.title}</strong>
-        <span>
-          {track.scene} · {track.artist}
-        </span>
-        {!compact && <p>{track.reason}</p>}
-        <input
-          aria-label="音乐进度"
-          type="range"
-          min={0}
-          max={Number.isFinite(duration) && duration > 0 ? duration : 1}
-          value={Math.min(currentTime, duration || 0)}
-          onChange={(event) => {
-            getSharedMusicAudio().currentTime = Number(event.target.value);
-          }}
-        />
-      </div>
-      <div className="music-tools">
-        <div className="music-mode-buttons">
-          <button
-            className={`icon-button ${musicAutoplay ? "active" : ""}`}
-            onClick={() => updatePreferences({ musicAutoplay: !musicAutoplay })}
-            aria-label={musicAutoplay ? "关闭自动连播" : "开启自动连播"}
-            aria-pressed={musicAutoplay}
-            title="自动连播"
-          >
-            <Play size={15} />
-          </button>
-          <button
-            className={`icon-button ${musicPlayMode === "shuffle" ? "active" : ""}`}
-            onClick={() =>
-              updatePreferences({
-                musicPlayMode:
-                  musicPlayMode === "shuffle" ? "sequence" : "shuffle",
-              })
-            }
-            aria-label="随机推荐"
-            aria-pressed={musicPlayMode === "shuffle"}
-            title="随机推荐"
-          >
-            <Shuffle size={15} />
-          </button>
-          <button
-            className={`icon-button ${musicPlayMode === "single" ? "active" : ""}`}
-            onClick={() =>
-              updatePreferences({
-                musicPlayMode:
-                  musicPlayMode === "single" ? "sequence" : "single",
-              })
-            }
-            aria-label="单曲循环"
-            aria-pressed={musicPlayMode === "single"}
-            title="单曲循环"
-          >
-            <Repeat1 size={15} />
-          </button>
-        </div>
-        <button
-          className="icon-button"
-          onClick={nextTrack}
-          aria-label="换一首"
-          title="换一首"
-        >
-          <RotateCcw size={16} />
-        </button>
-        {!compact && (
-          <button
-            className="source-button"
-            onClick={() => openUrl(track.sourceUrl)}
-          >
-            {track.source} · {track.license}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Dashboard({
+export function Dashboard({
   onAdd,
   onFocus,
   setPage,
@@ -822,6 +549,27 @@ function Dashboard({
   const content = getDailyContent();
   const active = tasks.filter((task) => !task.completed).slice(0, 3);
   const next = selectNextTask(tasks);
+  const [yesterdayStats, setYesterdayStats] = useState<TodayStats>();
+  const [reviewError, setReviewError] = useState(false);
+  useEffect(() => {
+    let disposed = false;
+    getTodayStats(yesterdayDateKey())
+      .then((value) => {
+        if (!disposed) setYesterdayStats(value);
+      })
+      .catch(() => {
+        if (!disposed) setReviewError(true);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+  const hasYesterday =
+    yesterdayStats &&
+    (yesterdayStats.activeSeconds > 0 ||
+      yesterdayStats.idleSeconds > 0 ||
+      yesterdayStats.mouseClicks > 0 ||
+      yesterdayStats.keyPresses > 0);
   return (
     <div className="page">
       <header className="page-header hero">
@@ -848,13 +596,36 @@ function Dashboard({
           <div className="card-heading">
             <div>
               <p className="eyebrow">昨日简报</p>
-              <h2>昨天还没有记录</h2>
+              <h2>
+                {reviewError
+                  ? "昨日回顾暂时无法读取"
+                  : !yesterdayStats
+                    ? "正在读取昨日记录…"
+                    : hasYesterday
+                      ? `昨日活跃 ${formatUsageDuration(yesterdayStats.activeSeconds)}`
+                      : "昨天还没有记录"}
+              </h2>
             </div>
             <div className="soft-icon">
               <BarChart3 />
             </div>
           </div>
-          <p>今天开始以后，明天这里就会出现属于你的第一份回顾。</p>
+          <p>
+            {reviewError
+              ? "记录没有被删除，可以进入时间回顾重新查询。"
+              : hasYesterday
+                ? `离开电脑 ${formatUsageDuration(yesterdayStats.idleSeconds)}。${
+                    yesterdayStats.topApps?.length
+                      ? `主要使用：${yesterdayStats.topApps
+                          .slice(0, 3)
+                          .map((app) => applicationDisplayName(app.appName))
+                          .join("、")}。`
+                      : "按自己的节奏，继续今天的一小步。"
+                  }`
+                : yesterdayStats
+                  ? "今天开始以后，明天这里就会出现属于你的第一份回顾。"
+                  : "只查询本机记录，不发送给 AI。"}
+          </p>
           <button className="text-button" onClick={() => setPage("review")}>
             查看时间回顾 <ChevronRight size={16} />
           </button>
@@ -1048,7 +819,10 @@ function ApplicationIcon({
   );
 }
 
-function ReviewPage() {
+export function ReviewPage() {
+  const [date, setDate] = useState(localDateKey);
+  const [queryError, setQueryError] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<TodayStats>({
     activeSeconds: 0,
     idleSeconds: 0,
@@ -1059,15 +833,33 @@ function ReviewPage() {
     topApps: [],
   });
   useEffect(() => {
+    let disposed = false;
+    let pending = false;
     const refresh = () => {
-      getTodayStats()
-        .then(setStats)
-        .catch(() => undefined);
+      if (pending) return;
+      pending = true;
+      getTodayStats(date)
+        .then((value) => {
+          if (!disposed) {
+            setStats(value);
+            setQueryError(false);
+          }
+        })
+        .catch(() => {
+          if (!disposed) setQueryError(true);
+        })
+        .finally(() => {
+          pending = false;
+          if (!disposed) setLoading(false);
+        });
     };
     refresh();
     const interval = window.setInterval(refresh, 3_000);
-    return () => window.clearInterval(interval);
-  }, []);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, [date]);
   const totalApplicationSeconds = stats.topApps.reduce(
     (total, application) => total + application.seconds,
     0,
@@ -1103,253 +895,306 @@ function ReviewPage() {
         <input
           className="date-picker"
           type="date"
-          defaultValue={new Date().toISOString().slice(0, 10)}
+          aria-label="回顾日期"
+          value={date}
+          max={localDateKey()}
+          onChange={(event) => {
+            if (!event.target.value || event.target.value === date) return;
+            setDate(event.target.value);
+            setLoading(true);
+            setQueryError(false);
+          }}
         />
       </header>
-      <section className="stats-grid">
-        {[
-          ["电脑活跃", formatUsageDuration(stats.activeSeconds)],
-          ["当前应用", stats.currentApp ?? "等待数据"],
-          ["最近键鼠输入", lastInput],
-          ["鼠标点击", `${stats.mouseClicks} 次`],
-          ["键盘按键", `${stats.keyPresses} 次`],
-          ["离开电脑", formatUsageDuration(stats.idleSeconds)],
-          ["应用切换", `${stats.appSwitches} 次`],
-        ].map(([label, value]) => (
-          <article className="stat-card" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-            <small>今日本机数据</small>
-          </article>
-        ))}
-      </section>
-      <section className="input-detection-note">
-        <ShieldCheck size={18} />
-        <div>
-          <strong>活跃时间由键盘和鼠标输入共同确认</strong>
-          <span>
-            连续 5
-            分钟没有任何输入后，保持亮屏不再计入电脑活跃时间。只保存次数，不记录按键内容或鼠标位置。
-          </span>
-        </div>
-      </section>
-      {stats.topApps.length > 0 && (
+      {loading || queryError ? (
+        <p role="status">
+          {queryError
+            ? "该日期的记录暂时无法读取，正在重试。没有删除任何数据。"
+            : "正在读取所选日期…"}
+        </p>
+      ) : (
         <>
-          {leadingApplication && (
-            <section className="usage-insight">
-              <Sparkles size={19} />
-              <div>
-                <strong>
-                  今天停留最久的是「
-                  {applicationDisplayName(leadingApplication.appName)}」
-                </strong>
-                <span>
-                  共 {formatUsageDuration(leadingApplication.seconds)}
-                  ，约占已记录应用时长的{" "}
-                  {totalApplicationSeconds
-                    ? Math.round(
-                        (leadingApplication.seconds / totalApplicationSeconds) *
-                          100,
-                      )
-                    : 0}
-                  %。这里只呈现事实，不评价你如何使用时间。
-                </span>
-              </div>
-            </section>
-          )}
-          <section className="activity-analysis-grid">
-            <article className="card analysis-card ranking-chart-card">
-              <div className="card-heading">
-                <div>
-                  <p className="eyebrow">时长排行</p>
-                  <h2>时间主要去了哪里</h2>
-                </div>
-                <BarChart3 />
-              </div>
-              <div
-                className="ranking-chart"
-                style={{ height: Math.max(270, rankingData.length * 48) }}
-              >
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={rankingData}
-                    layout="vertical"
-                    margin={{ top: 8, right: 20, bottom: 8, left: 18 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                    <XAxis
-                      type="number"
-                      tickFormatter={(value) =>
-                        `${Math.round(Number(value) / 60)}m`
-                      }
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="name"
-                      width={120}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <Tooltip
-                      formatter={(value) => [
-                        formatUsageDuration(Number(value)),
-                        "停留时长",
-                      ]}
-                      cursor={{ fill: "rgba(91, 142, 120, 0.07)" }}
-                    />
-                    <Bar dataKey="seconds" radius={[0, 8, 8, 0]} barSize={18}>
-                      {rankingData.map((application, index) => (
-                        <Cell
-                          key={application.name}
-                          fill={usageColors[index % usageColors.length]}
-                        />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </article>
-            <article className="card analysis-card distribution-card">
-              <div className="card-heading">
-                <div>
-                  <p className="eyebrow">占比分布</p>
-                  <h2>应用时间构成</h2>
-                </div>
-                <Clock3 />
-              </div>
-              <div className="distribution-chart">
-                <ResponsiveContainer width="100%" height={220}>
-                  <PieChart>
-                    <Pie
-                      data={distributionData}
-                      dataKey="seconds"
-                      nameKey="name"
-                      innerRadius={58}
-                      outerRadius={86}
-                      paddingAngle={2}
-                      stroke="none"
-                    >
-                      {distributionData.map((application, index) => (
-                        <Cell
-                          key={application.name}
-                          fill={usageColors[index % usageColors.length]}
-                        />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(value) => [
-                        formatUsageDuration(Number(value)),
-                        "停留时长",
-                      ]}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="distribution-total">
-                  <strong>
-                    {formatUsageDuration(totalApplicationSeconds)}
-                  </strong>
-                  <span>已记录</span>
-                </div>
-              </div>
-              <div className="distribution-legend">
-                {distributionData.map((application, index) => (
-                  <div key={application.name}>
-                    <i
-                      style={{
-                        background: usageColors[index % usageColors.length],
-                      }}
-                    />
-                    <span>{application.name}</span>
+          <section className="stats-grid">
+            {[
+              ["电脑活跃", formatUsageDuration(stats.activeSeconds)],
+              [
+                "当前应用",
+                date === localDateKey()
+                  ? (stats.currentApp ?? "等待数据")
+                  : "仅今日显示",
+              ],
+              [
+                "最近键鼠输入",
+                date === localDateKey() ? lastInput : "仅今日显示",
+              ],
+              ["鼠标点击", `${stats.mouseClicks} 次`],
+              ["键盘按键", `${stats.keyPresses} 次`],
+              ["离开电脑", formatUsageDuration(stats.idleSeconds)],
+              ["应用切换", `${stats.appSwitches} 次`],
+            ].map(([label, value]) => (
+              <article className="stat-card" key={label}>
+                <span>{label}</span>
+                <strong>{value}</strong>
+                <small>
+                  {date === localDateKey()
+                    ? "今日本机数据"
+                    : `${date} 本机数据`}
+                </small>
+              </article>
+            ))}
+          </section>
+          <section className="input-detection-note">
+            <ShieldCheck size={18} />
+            <div>
+              <strong>活跃时间由键盘和鼠标输入共同确认</strong>
+              <span>
+                连续 5
+                分钟没有任何输入后，保持亮屏不再计入电脑活跃时间。只保存次数，不记录按键内容或鼠标位置。
+              </span>
+            </div>
+          </section>
+          {stats.topApps.length > 0 && (
+            <>
+              {leadingApplication && (
+                <section className="usage-insight">
+                  <Sparkles size={19} />
+                  <div>
                     <strong>
+                      {date === localDateKey() ? "今天" : "这一天"}
+                      停留最久的是「
+                      {applicationDisplayName(leadingApplication.appName)}」
+                    </strong>
+                    <span>
+                      共 {formatUsageDuration(leadingApplication.seconds)}
+                      ，约占已记录应用时长的{" "}
                       {totalApplicationSeconds
                         ? Math.round(
-                            (application.seconds / totalApplicationSeconds) *
+                            (leadingApplication.seconds /
+                              totalApplicationSeconds) *
                               100,
                           )
                         : 0}
-                      %
-                    </strong>
+                      %。这里只呈现事实，不评价你如何使用时间。
+                    </span>
                   </div>
-                ))}
+                </section>
+              )}
+              <section className="activity-analysis-grid">
+                <article className="card analysis-card ranking-chart-card">
+                  <div className="card-heading">
+                    <div>
+                      <p className="eyebrow">时长排行</p>
+                      <h2>时间主要去了哪里</h2>
+                    </div>
+                    <BarChart3 />
+                  </div>
+                  <div
+                    className="ranking-chart"
+                    style={{ height: Math.max(270, rankingData.length * 48) }}
+                  >
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={rankingData}
+                        layout="vertical"
+                        margin={{ top: 8, right: 20, bottom: 8, left: 18 }}
+                      >
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          horizontal={false}
+                        />
+                        <XAxis
+                          type="number"
+                          tickFormatter={(value) =>
+                            `${Math.round(Number(value) / 60)}m`
+                          }
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          type="category"
+                          dataKey="name"
+                          width={120}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <Tooltip
+                          formatter={(value) => [
+                            formatUsageDuration(Number(value)),
+                            "停留时长",
+                          ]}
+                          cursor={{ fill: "rgba(91, 142, 120, 0.07)" }}
+                        />
+                        <Bar
+                          dataKey="seconds"
+                          radius={[0, 8, 8, 0]}
+                          barSize={18}
+                        >
+                          {rankingData.map((application, index) => (
+                            <Cell
+                              key={application.name}
+                              fill={usageColors[index % usageColors.length]}
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </article>
+                <article className="card analysis-card distribution-card">
+                  <div className="card-heading">
+                    <div>
+                      <p className="eyebrow">占比分布</p>
+                      <h2>应用时间构成</h2>
+                    </div>
+                    <Clock3 />
+                  </div>
+                  <div className="distribution-chart">
+                    <ResponsiveContainer width="100%" height={220}>
+                      <PieChart>
+                        <Pie
+                          data={distributionData}
+                          dataKey="seconds"
+                          nameKey="name"
+                          innerRadius={58}
+                          outerRadius={86}
+                          paddingAngle={2}
+                          stroke="none"
+                        >
+                          {distributionData.map((application, index) => (
+                            <Cell
+                              key={application.name}
+                              fill={usageColors[index % usageColors.length]}
+                            />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          formatter={(value) => [
+                            formatUsageDuration(Number(value)),
+                            "停留时长",
+                          ]}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="distribution-total">
+                      <strong>
+                        {formatUsageDuration(totalApplicationSeconds)}
+                      </strong>
+                      <span>已记录</span>
+                    </div>
+                  </div>
+                  <div className="distribution-legend">
+                    {distributionData.map((application, index) => (
+                      <div key={application.name}>
+                        <i
+                          style={{
+                            background: usageColors[index % usageColors.length],
+                          }}
+                        />
+                        <span>{application.name}</span>
+                        <strong>
+                          {totalApplicationSeconds
+                            ? Math.round(
+                                (application.seconds /
+                                  totalApplicationSeconds) *
+                                  100,
+                              )
+                            : 0}
+                          %
+                        </strong>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </section>
+            </>
+          )}
+          <section className="card timeline">
+            <div className="card-heading">
+              <div>
+                <p className="eyebrow">应用明细</p>
+                <h2>每个应用停留了多久</h2>
               </div>
-            </article>
+              <Clock3 />
+            </div>
+            {stats.topApps.length ? (
+              <div className="app-usage-list">
+                {stats.topApps.map((application, index) => {
+                  const percentage = totalApplicationSeconds
+                    ? (application.seconds / totalApplicationSeconds) * 100
+                    : 0;
+                  return (
+                    <article
+                      className="app-usage-row"
+                      key={application.appName}
+                    >
+                      <ApplicationIcon
+                        application={application}
+                        colorIndex={index}
+                      />
+                      <div className="app-usage-content">
+                        <div className="app-usage-heading">
+                          <div>
+                            <strong>
+                              {applicationDisplayName(application.appName)}
+                            </strong>
+                            <span>{application.appName}</span>
+                          </div>
+                          <div className="app-usage-duration">
+                            <strong>
+                              {formatUsageDuration(application.seconds)}
+                            </strong>
+                            <span>{percentage.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                        <div className="app-usage-track">
+                          <i
+                            style={{
+                              width: `${Math.max(percentage, 1)}%`,
+                              background:
+                                usageColors[index % usageColors.length],
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="empty-state review-empty">
+                <div className="review-empty-icon">
+                  <BarChart3 />
+                </div>
+                <h2>
+                  {date === localDateKey()
+                    ? "今天还没留下足迹"
+                    : "这一天还没有活动记录"}
+                </h2>
+                <p>
+                  {date === localDateKey()
+                    ? "开启活动记录并使用电脑一段时间后，再回来看看。"
+                    : "可能当天没有开启记录，或相关数据已被清理。"}
+                </p>
+                <span className="review-empty-tip">
+                  不用刻意记录，正常使用就好。DayMate
+                  只关心节奏，不关心你在做什么。
+                </span>
+              </div>
+            )}
           </section>
         </>
       )}
-      <section className="card timeline">
-        <div className="card-heading">
-          <div>
-            <p className="eyebrow">应用明细</p>
-            <h2>每个应用停留了多久</h2>
-          </div>
-          <Clock3 />
-        </div>
-        {stats.topApps.length ? (
-          <div className="app-usage-list">
-            {stats.topApps.map((application, index) => {
-              const percentage = totalApplicationSeconds
-                ? (application.seconds / totalApplicationSeconds) * 100
-                : 0;
-              return (
-                <article className="app-usage-row" key={application.appName}>
-                  <ApplicationIcon
-                    application={application}
-                    colorIndex={index}
-                  />
-                  <div className="app-usage-content">
-                    <div className="app-usage-heading">
-                      <div>
-                        <strong>
-                          {applicationDisplayName(application.appName)}
-                        </strong>
-                        <span>{application.appName}</span>
-                      </div>
-                      <div className="app-usage-duration">
-                        <strong>
-                          {formatUsageDuration(application.seconds)}
-                        </strong>
-                        <span>{percentage.toFixed(1)}%</span>
-                      </div>
-                    </div>
-                    <div className="app-usage-track">
-                      <i
-                        style={{
-                          width: `${Math.max(percentage, 1)}%`,
-                          background: usageColors[index % usageColors.length],
-                        }}
-                      />
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="empty-state review-empty">
-            <div className="review-empty-icon">
-              <BarChart3 />
-            </div>
-            <h2>今天还没留下足迹</h2>
-            <p>应用活动记录正在后台安静工作，使用电脑一段时间后再回来看看。</p>
-            <span className="review-empty-tip">
-              不用刻意记录，正常使用就好。DayMate 只关心节奏，不关心你在做什么。
-            </span>
-          </div>
-        )}
-      </section>
     </div>
   );
 }
 
 export function ContentPage() {
   const [contentOffset, setContentOffset] = useState(0);
-  const [musicOffset, setMusicOffset] = useState(0);
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
   const [scene, setScene] = useState<CompanionScene>("auto");
   const [mood, setMood] = useState<CompanionMood>("neutral");
+  const [intent, setIntent] = useState<MusicIntent>("match");
   const [sessionMusicCategory, setSessionMusicCategory] =
     useState<MusicCategory>();
   const [pendingEncouragement, setPendingEncouragement] =
@@ -1359,10 +1204,6 @@ export function ContentPage() {
   const [encouragementBusy, setEncouragementBusy] = useState(false);
   const encouragementRunning = useRef(false);
   const encouragementVersion = useRef(0);
-  const [localTrack, setLocalTrack] = useState<{ name: string; url: string }>();
-  const [localAudioError, setLocalAudioError] = useState("");
-  const [localAudioBusy, setLocalAudioBusy] = useState(false);
-  const localAudioRequestVersion = useRef(0);
   const [aiMusicStatus, setAiMusicStatus] = useState("");
   const [aiMusicBusy, setAiMusicBusy] = useState(false);
   const [pendingAiRequest, setPendingAiRequest] = useState<AiMusicRequest>();
@@ -1371,6 +1212,9 @@ export function ContentPage() {
   const { preferences, updatePreferences } = useAppStore();
   const content = getDailyContent(contentOffset);
   const context = currentCompanionContext(scene, mood);
+  const musicContext = { ...context, intent };
+  const playback = getMusicPlayback();
+  const { loading: musicLoading } = useMusicPlayback();
   const playingCategory = sessionMusicCategory ?? preferences.musicCategory;
   const aiTextReady =
     preferences.aiEnabled &&
@@ -1383,7 +1227,7 @@ export function ContentPage() {
       : undefined;
   const preview =
     pendingAiRequest &&
-    matchesAiMusicPreferences(pendingAiRequest, preferences, context)
+    matchesAiMusicPreferences(pendingAiRequest, preferences, musicContext)
       ? pendingAiRequest
       : undefined;
   useEffect(
@@ -1437,47 +1281,23 @@ export function ContentPage() {
       }),
     [discardAiResults, discardMusicResults, discardEncouragementResults],
   );
-  useEffect(
-    () => () => {
-      if (localTrack) URL.revokeObjectURL(localTrack.url);
-    },
-    [localTrack],
-  );
-  useEffect(
-    () => () => {
-      localAudioRequestVersion.current += 1;
-    },
-    [],
-  );
-  const importLocalAudio = async (file: File) => {
-    const requestVersion = ++localAudioRequestVersion.current;
-    setLocalAudioBusy(true);
-    setLocalAudioError("");
-    try {
-      const audio = await createSafeLocalAudioBlob(file);
-      if (requestVersion !== localAudioRequestVersion.current) return;
-      const url = URL.createObjectURL(audio);
-      setLocalTrack({ name: file.name, url });
-    } catch (error) {
-      if (requestVersion === localAudioRequestVersion.current) {
-        setLocalAudioError(
-          error instanceof LocalAudioImportError
-            ? error.message
-            : "暂时无法导入这首歌曲，请重新选择本地音频文件。",
-        );
-      }
-    } finally {
-      if (requestVersion === localAudioRequestVersion.current)
-        setLocalAudioBusy(false);
-    }
-  };
   const chooseCategory = (category: MusicCategory) => {
     discardMusicResults();
     setSessionMusicCategory(undefined);
     updatePreferences({ musicCategory: category });
     setSearch("");
     setSearchDraft("");
-    setMusicOffset((value) => value + 1);
+    void playback.recommend({ category, context: musicContext });
+  };
+  const recommendForMood = () => {
+    discardMusicResults();
+    setSearch("");
+    setSearchDraft("");
+    setSessionMusicCategory(undefined);
+    void playback.recommend({
+      category: preferences.musicCategory,
+      context: musicContext,
+    });
   };
   const previewAiMusic = async () => {
     if (
@@ -1496,15 +1316,14 @@ export function ContentPage() {
         async () => (await getTodayStats()).activeSeconds,
         () =>
           useAppStore.getState().tasks.filter((task) => !task.completed).length,
-        context,
+        musicContext,
       );
       if (
         requestVersion === aiMusicRequestVersion.current &&
-        matchesAiMusicPreferences(
-          request,
-          useAppStore.getState().preferences,
-          currentCompanionContext(scene, mood),
-        )
+        matchesAiMusicPreferences(request, useAppStore.getState().preferences, {
+          ...currentCompanionContext(scene, mood),
+          intent,
+        })
       ) {
         setPendingAiRequest(request);
       }
@@ -1542,7 +1361,7 @@ export function ContentPage() {
         !matchesAiMusicPreferences(
           request,
           useAppStore.getState().preferences,
-          currentCompanionContext(scene, mood),
+          { ...currentCompanionContext(scene, mood), intent },
         )
       ) {
         setAiMusicStatus("设置或音乐偏好已改变，本次结果未应用，请重新推荐。");
@@ -1551,7 +1370,15 @@ export function ContentPage() {
       setSessionMusicCategory(suggestion.category);
       setSearch("");
       setSearchDraft("");
-      setMusicOffset((value) => value + 1);
+      void playback.recommend({
+        category: suggestion.category,
+        context: {
+          scene: request.scene,
+          mood: request.mood,
+          hour: request.hour,
+          intent: request.intent,
+        },
+      });
       const source = { ai: "AI 推荐", cache: "近期缓存", local: "本地推荐" }[
         suggestion.source
       ];
@@ -1639,7 +1466,30 @@ export function ContentPage() {
             ))}
           </select>
         </label>
-        <span>由你选择，只用于本次陪伴，不会替你判断心情。</span>
+        <label>
+          音乐陪伴方式
+          <select
+            value={intent}
+            onChange={(event) => {
+              discardMusicResults();
+              setIntent(event.target.value as MusicIntent);
+            }}
+          >
+            <option value="match">陪伴此刻</option>
+            <option value="lift">提一点精神</option>
+          </select>
+        </label>
+        <button
+          className="button primary"
+          onClick={recommendForMood}
+          disabled={musicLoading}
+        >
+          {musicLoading ? "正在整理音乐…" : "按心情推荐"}
+        </button>
+        <span>
+          选择只用于下一次推荐，不会打断当前歌曲；依据自选偏好，不是心理诊断。无需开启
+          AI 也可使用。
+        </span>
       </section>
       <section className="encouragement-panel" aria-label="一句鼓励">
         <div className="ai-actions">
@@ -1743,7 +1593,11 @@ export function ContentPage() {
               event.preventDefault();
               discardMusicResults();
               setSearch(searchDraft.trim());
-              setMusicOffset((value) => value + 1);
+              void playback.recommend({
+                category: playingCategory,
+                search: searchDraft.trim(),
+                context: musicContext,
+              });
             }}
           >
             <input
@@ -1804,6 +1658,10 @@ export function ContentPage() {
                 </li>
                 <li>本地时段：{preview.hour} 点</li>
                 <li>
+                  音乐陪伴方式：
+                  {preview.intent === "lift" ? "提一点精神" : "陪伴此刻"}
+                </li>
+                <li>
                   音乐偏好：
                   {
                     musicCategories.find(
@@ -1823,6 +1681,7 @@ export function ContentPage() {
                   ? "本次不发送活动统计或任务信息。"
                   : "仅发送以上汇总数字，不含应用名称和任务内容。"}{" "}
                 可在设置中调整摘要分享。
+                音乐喜欢/不喜欢记录仅在本机用于排序，不发送给 AI。
               </p>
               <p>
                 确认后会访问该服务；每日最多 {preview.maxDailyCalls}{" "}
@@ -1859,52 +1718,20 @@ export function ContentPage() {
                 onClick={() => {
                   setSearch("");
                   setSearchDraft("");
+                  discardMusicResults();
+                  void playback.recommend({
+                    category: playingCategory,
+                    context: musicContext,
+                  });
                 }}
               >
                 返回推荐
               </button>
             </p>
           )}
-          <SmartMusicPlayer
-            baseOffset={musicOffset}
-            category={playingCategory}
-            search={search}
-          />
-          <div className="local-music">
-            <label className="button ghost">
-              {localAudioBusy ? "正在检查歌曲…" : "导入本地歌曲"}
-              <input
-                type="file"
-                aria-label="导入本地歌曲"
-                accept={localAudioAccept}
-                disabled={localAudioBusy}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.currentTarget.value = "";
-                  if (!file) return;
-                  void importLocalAudio(file);
-                }}
-              />
-            </label>
-            <span>
-              导入你合法拥有的 MP3、WAV、OGG、Opus 或 FLAC，单首不超过 100 MiB
-            </span>
-          </div>
-          {localAudioError && <p role="alert">{localAudioError}</p>}
-          {localTrack && (
-            <div className="local-player">
-              <strong>{localTrack.name}</strong>
-              <audio
-                src={localTrack.url}
-                controls
-                onError={() =>
-                  setLocalAudioError(
-                    "这首歌曲无法解码播放，请检查文件是否完整或换一种音频格式。",
-                  )
-                }
-              />
-            </div>
-          )}
+          <SmartMusicPlayer onInteraction={discardMusicResults} />
+          <LocalMusicImport onInteraction={discardMusicResults} />
+          <MusicFeedbackPanel />
         </article>
         <article className="content-card">
           <Coffee />
@@ -2915,8 +2742,51 @@ export default function App() {
   const idleDetection = useAppStore((state) => state.preferences.idleDetection);
   const [page, setPage] = useState<Page>("today");
   const [adding, setAdding] = useState(false);
-  const [focusTask, setFocusTask] = useState<Task>();
+  const [focusOpen, setFocusOpen] = useState(false);
+  const [focusSaveError, setFocusSaveError] = useState("");
+  const { session: focusSession, error: focusError } = useFocusClock(
+    windowLabel === "main",
+  );
+  const startFocus = useCallback((task: Task) => {
+    const current = useFocusStore.getState().session;
+    if (
+      current &&
+      current.status !== "completed" &&
+      current.taskId !== task.id &&
+      !window.confirm("已有一段专注尚未结束。结束它并开始这个任务吗？")
+    )
+      return;
+    try {
+      useFocusStore.getState().start(task);
+      setFocusSaveError("");
+      setFocusOpen(true);
+    } catch {
+      setFocusSaveError("专注状态未能保存，请检查本地可用空间后重试。");
+    }
+  }, []);
+  const focusTask = focusSession
+    ? (useAppStore
+        .getState()
+        .tasks.find((task) => task.id === focusSession.taskId) ?? {
+        id: focusSession.taskId,
+        title: focusSession.taskTitle,
+        estimatedMinutes: focusSession.durationSeconds / 60,
+        priority: "medium" as const,
+        completed: true,
+        createdAt: "",
+      })
+    : undefined;
+  const [activitySaveError, setActivitySaveError] = useState("");
   const startupHandled = useRef(false);
+  useEffect(() => {
+    if (!desktop || windowLabel !== "main") return;
+    const unlisten = listen<string>("activity-save-error", (event) =>
+      setActivitySaveError(event.payload),
+    );
+    return () => {
+      unlisten.then((dispose) => dispose()).catch(() => undefined);
+    };
+  }, [desktop, windowLabel]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
@@ -2978,17 +2848,17 @@ export default function App() {
       return (
         <Dashboard
           onAdd={() => setAdding(true)}
-          onFocus={setFocusTask}
+          onFocus={startFocus}
           setPage={setPage}
         />
       );
     if (page === "tasks")
-      return <TasksPage onAdd={() => setAdding(true)} onFocus={setFocusTask} />;
+      return <TasksPage onAdd={() => setAdding(true)} onFocus={startFocus} />;
     if (page === "review") return <ReviewPage />;
     if (page === "content") return <ContentPage />;
     if (page === "privacy") return <PrivacyPage />;
     return <SettingsPage />;
-  }, [page]);
+  }, [page, startFocus]);
   if (windowLabel === "companion") return <CompanionBall />;
   if (!onboarded) return <Onboarding />;
   return (
@@ -3033,10 +2903,34 @@ export default function App() {
           </button>
         )}
       </aside>
-      <main className="main-content">{body}</main>
+      <main className="main-content">
+        {activitySaveError && (
+          <p role="alert">
+            {activitySaveError}
+            。记录仍保留在内存中，请检查数据目录后再次从托盘退出。
+          </p>
+        )}
+        {(focusError || focusSaveError) && (
+          <p role="alert">{focusError || focusSaveError}</p>
+        )}
+        {focusSession && !focusOpen && (
+          <button
+            className="button secondary"
+            onClick={() => setFocusOpen(true)}
+          >
+            {focusSession.status === "completed"
+              ? "查看专注结果"
+              : focusSession.status === "paused"
+                ? "返回已暂停的专注"
+                : "返回正在进行的专注"}{" "}
+            · {focusSession.taskTitle}
+          </button>
+        )}
+        {body}
+      </main>
       {adding && <AddTaskModal onClose={() => setAdding(false)} />}
-      {focusTask && (
-        <FocusModal task={focusTask} onClose={() => setFocusTask(undefined)} />
+      {focusOpen && focusTask && (
+        <FocusModal task={focusTask} onClose={() => setFocusOpen(false)} />
       )}
     </div>
   );
