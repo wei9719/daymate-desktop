@@ -8,11 +8,11 @@
 
 DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是企业监控软件，也不是要求用户维护复杂清单的项目管理工具。它只想帮用户看见昨天、选出今天最值得做的一件事，并更轻松地开始。
 
-当前版本：`0.8.0`（MVP 开发版）
+当前源码版本：`0.9.0`（MVP 开发版；发布状态以 GitHub Releases 为准）
 
-[⬇️ 直接下载 DayMate 0.8.0 Windows 安装包](https://github.com/wei9719/daymate-desktop/releases/download/v0.8.0/DayMate_0.8.0_x64-setup.exe) · [查看最新版本](https://github.com/wei9719/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md) · [自带 API Key 配置指南](docs/ai-setup.md)
+[⬇️ DayMate 0.9.0 Windows 安装包（发布后可用）](https://github.com/wei9719/daymate-desktop/releases/download/v0.9.0/DayMate_0.9.0_x64-setup.exe) · [查看最新已发布版本](https://github.com/wei9719/daymate-desktop/releases/latest) · [中文使用手册](USER_GUIDE.md) · [AI 配置指南](docs/ai-setup.md) · [本地模型免 Key 指南](docs/local-ai.md)
 
-想看懂代码为什么这样设计？从[工程手册：架构、数据流与岗位能力映射](docs/engineering-handbook.md)开始，再看[截至 2026-09-12 的论文、官方项目与技术取舍](docs/research-and-decisions-v0.8.0.md)。本版[验证记录](docs/verification-v0.8.0.md)单独列出已通过检查和仍需真机验证的部分。
+想看懂代码为什么这样设计？从[工程手册：架构、数据流与岗位能力映射](docs/engineering-handbook.md)开始，再看[截至 2026-09-12 的论文、官方项目与技术取舍](docs/research-and-decisions-v0.8.0.md)。本轮模型、启停和测试证据见 [v0.9.0 验证记录](docs/verification-v0.9.0.md)；最终发布门禁以对应 GitHub Actions 和 Release 记录为准。[v0.8.0 验证记录](docs/verification-v0.8.0.md)保留为历史证据。
 
 ## 已实现
 
@@ -31,6 +31,7 @@ DayMate 是一款 Windows 优先、本地优先的桌面陪伴应用。它不是
 - 四首 CC0 音乐随应用离线提供，网络曲库不可用时也能播放
 - 每日舒适背景：七套柔和渐变按日期稳定轮换，也可随时手动换景
 - 多 AI 服务商设置与连接测试，包含硅基流动通义千问预设；API Key 安全保存到 Windows 凭据管理器
+- 可选本地模型：复用已有 Qwen2.5-1.5B-Instruct 与 Python 环境，独立回环服务、手动状态检查、无需云端 Key；不下载模型、不自动启动占用 GPU
 - 按服务商记住地址和模型，显式获取可用模型并筛选；保持手动输入及具体排错提示
 - 按自选场景、心情和时段推荐音乐，独立生成原创鼓励；临时推荐不会覆盖长期音乐偏好
 - AI 发送预览、默认关闭的活动汇总分享、每日请求上限、近期结果缓存、失败本地回退
@@ -64,18 +65,19 @@ v0.8.0 云端 Chromium 演示截图：偏好与歌曲为虚构测试数据，展
 
 ## 技术栈
 
-| 层         | 技术                                            | 用途                                                 |
-| ---------- | ----------------------------------------------- | ---------------------------------------------------- |
-| 桌面容器   | Tauri 2                                         | 窗口、托盘、安装包、Rust 命令桥接                    |
-| 前端       | React 19 + TypeScript + Vite 7                  | 页面和交互                                           |
-| 状态       | Zustand                                         | 用户设置与任务状态，本地持久化                       |
-| UI         | 原生 CSS + Lucide React                         | 轻量界面与图标                                       |
-| 桌面后端   | Rust + Windows Icons                            | Windows 活动采集、本机程序图标提取、隐私边界、数据库 |
-| 本地数据库 | SQLite / rusqlite                               | 应用使用会话与迁移记录                               |
-| 音乐       | Audius API + 本地可解释排序 + 单一 Audio 控制器 | 真实目录候选、心情/反馈重排、跨页连播与 CC0 离线兜底 |
-| AI 接口    | OpenAI 兼容协议 + Windows Credential Manager    | 多平台配置、连接测试和密钥隔离                       |
-| 校验测试   | TypeScript、Vitest、Playwright、Clippy、CodeQL  | 类型、版本化合成评测、云端 UI/安装、安全与构建质量   |
-| 发布       | GitHub Actions + GitHub Releases                | Tag 触发 Windows 构建和发布                          |
+| 层           | 技术                                            | 用途                                                 |
+| ------------ | ----------------------------------------------- | ---------------------------------------------------- |
+| 桌面容器     | Tauri 2                                         | 窗口、托盘、安装包、Rust 命令桥接                    |
+| 前端         | React 19 + TypeScript + Vite 7                  | 页面和交互                                           |
+| 状态         | Zustand                                         | 用户设置与任务状态，本地持久化                       |
+| UI           | 原生 CSS + Lucide React                         | 轻量界面与图标                                       |
+| 桌面后端     | Rust + Windows Icons                            | Windows 活动采集、本机程序图标提取、隐私边界、数据库 |
+| 本地数据库   | SQLite / rusqlite                               | 应用使用会话与迁移记录                               |
+| 音乐         | Audius API + 本地可解释排序 + 单一 Audio 控制器 | 真实目录候选、心情/反馈重排、跨页连播与 CC0 离线兜底 |
+| AI 接口      | OpenAI 兼容协议 + Windows Credential Manager    | 云端密钥隔离、本地免 Key 分支、预览与输出校验        |
+| 可选本地推理 | Python + PyTorch + Transformers + safetensors   | 独立服务离线加载已有 Qwen 文本模型，不随安装包捆绑   |
+| 校验测试     | TypeScript、Vitest、Playwright、Clippy、CodeQL  | 类型、版本化合成评测、云端 UI/安装、安全与构建质量   |
+| 发布         | GitHub Actions + GitHub Releases                | Tag 触发 Windows 构建和发布                          |
 
 ## 架构
 
@@ -89,10 +91,15 @@ React UI
   └─ native.ts：唯一 Tauri 调用边界
              │ invoke
 Rust / Tauri ├─ Windows 前台应用与空闲检测
-             ├─ AI 密钥系统凭据存储与连接测试
+             ├─ AI 校验 / 预算 / 缓存 / 失败回退
+             │    ├─ 云端：系统凭据中的 Key → 用户选择的 HTTPS 服务
+             │    └─ 本地：127.0.0.1:8765 → 独立 Python 服务
+             │                              └─ 已有 Qwen safetensors（只读离线加载）
              ├─ 60 秒内存聚合 + 正常退出保存确认
              └─ SQLite：活动会话 + AI 调用次数 + 迁移记录
 ```
+
+本地服务由用户通过脚本按需启动，不由桌面应用自动拉起。模型返回文字或受限音乐类别，经过 Rust 校验后用于鼓励或音乐检索方向；真实歌曲仍来自独立的在线目录、随包离线音频或用户导入，不由模型生成。当前不接入其他项目的 RAG、记忆或聊天记录。
 
 关键设计说明见 [docs/architecture.md](docs/architecture.md)；详细算法权重、存储位置、AI 请求边界和岗位证据见[工程手册](docs/engineering-handbook.md)。另见[安全与兼容性说明](docs/security-compatibility.md)及[隐私边界](PRIVACY.md)。
 
@@ -115,7 +122,8 @@ daymate-desktop/
 │  ├─ src/ai.rs          # AI 请求、密钥绑定、预算与校验
 │  └─ tauri.conf.json    # 窗口和安装包配置
 ├─ docs/                 # 架构、开发、发布说明
-├─ scripts/              # 版本一致性检查
+├─ local_ai/             # 可选独立 Python 文本服务与无模型协议测试
+├─ scripts/              # 版本检查、构建、本地模型 start/status/stop
 ├─ .github/workflows/    # CI 与 Release
 └─ CHANGELOG.md          # 正式更新纪要
 ```
@@ -137,6 +145,21 @@ npm run desktop:dev
 ```
 
 Windows 构建需要 Node.js、Rust MSVC 工具链、Visual Studio C++ Build Tools、Windows 10/11 SDK 和 WebView2。详见 [docs/development.md](docs/development.md)。
+
+### 可选：复用已有本地模型
+
+仅适用于已经拥有完整 Qwen2.5-1.5B-Instruct 模型目录及兼容 PyTorch、Transformers、safetensors 环境的用户。从对应版本源码根目录执行：
+
+```powershell
+$PythonPath = Read-Host '已有 Python 可执行文件的完整路径'
+$ModelPath = Read-Host '已有 Qwen2.5-1.5B-Instruct 模型目录的完整路径'
+./scripts/local-ai.ps1 -Action start -PythonPath $PythonPath -ModelPath $ModelPath
+./scripts/local-ai.ps1 -Action status
+```
+
+进入“设置 → AI 服务 → 本地模型（已有文件）”，保留实际服务地址 `http://127.0.0.1:8765/v1` 和模型 `Qwen2.5-1.5B-Instruct`，手动点击“检查本地模型状态”。就绪后再获取模型、测试连接，并在发送预览中确认使用。模型目录不是 Base URL；状态就绪也不等于生成测试已通过。
+
+这条链路不需要 Key、不下载或复制模型、不读取其他项目数据。加载和推理会占用内存/显存，不保证所有硬件可用。关闭 AI 或退出 DayMate 不会停止独立服务；用完执行 `./scripts/local-ai.ps1 -Action stop`。完整准备、运行目录和资源限制见[本地模型指南](docs/local-ai.md)。
 
 ## 检查命令
 
@@ -166,7 +189,7 @@ npm run desktop:build
 src-tauri/target/release/bundle/nsis/
 ```
 
-普通用户不需要安装 Node.js 或 Rust，只需从 GitHub Releases 下载 `setup.exe` 安装包。
+普通用户不需要安装 Node.js 或 Rust，只需从 GitHub Releases 下载 `setup.exe` 安装包。本地推理是额外可选能力，Python、模型和推理依赖不包含在安装包内；不配置也能使用基础功能。
 
 ## GitHub 发布
 
@@ -183,9 +206,10 @@ src-tauri/target/release/bundle/nsis/
 - 不记录键盘输入、不截屏、不读取聊天与文档正文。
 - 活动数据默认只保存在本机 SQLite。
 - AI Key 只保存在 Windows 凭据管理器；普通配置中不保存或回显完整密钥。
+- 本地推理仅向回环服务发送经确认的最少字段，不自动改用云端；提示词和回答不写服务日志或活动数据库。无 Key 回环服务不是对其他本机进程的身份认证，不能公开端口。
 - 智能音乐会向 Audius 发送场景检索词、目标心情标签或主动输入的搜索词，并加载所选音频；不发送任务标题、活动明细、本机反馈或近期播放列表。
 - 心情由用户选择，不根据键鼠输入推断；本机反馈最多 200 条，可清除，不上传 AI。
-- 本仓库附带的 D 盘启动脚本把开发数据保存到 `D:\DayMate\data`；正式安装版默认遵循系统应用数据目录。
+- 开发脚本把活动数据放到仓库父目录的 `data`，本地模型运行目录默认为父目录的 `runtime/local-ai`；项目在非系统盘时，这些目录也跟随放在那里。正式安装版活动数据库默认遵循系统应用数据目录。
 - 当前 MVP 不包含账号、云同步或活动数据上传。
 - 所有记录开关可关闭，活动数据可删除。
 
@@ -197,6 +221,7 @@ src-tauri/target/release/bundle/nsis/
 - 任务与偏好当前由 WebView 本地存储保存；活动记录使用 SQLite。后续版本会统一迁移至 SQLite。
 - 开机自启与通知通过 Tauri 官方插件实现；Windows 勿扰模式可能隐藏通知横幅，设置页提供系统状态和测试按钮。
 - AI 已用于场景音乐与独立鼓励；每日自然语言总结和 AI 图片生成尚未上线。背景继续本地轮换，不自动消耗生图额度。
+- 本地 Qwen 服务只支持有限的非流式文本接口，不是完整云端平台或公网服务器；单路推理、有限输入/输出，不提供模型下载、训练、RAG 或 GPU 资源调度。服务协议测试不等于真实模型、驱动和显存兼容性验收。
 - 音乐排序是可解释规则，不是训练后的推荐模型。固定合成评测不代表真实满意度；开放目录不保证收录所有中文商业歌曲。
 - 日历史查询与当前专注恢复已实现；周视图、完整专注历史、任务编辑/重复规则、统一 SQLite 迁移和完整备份恢复仍需后续开发。岗位映射说明的是可展示工程能力，不保证覆盖所有职位要求。
 

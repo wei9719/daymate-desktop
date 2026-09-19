@@ -274,6 +274,67 @@ test("内容：场景与鼓励本地回退，音乐操作不改变每日好句",
   });
 });
 
+test("本地模型设置：独立配置、无需Key，浏览器明确不探测本机服务", async ({
+  page,
+}, testInfo) => {
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "设置", exact: true })
+    .click();
+  const provider = page.getByRole("combobox", { name: "服务商", exact: true });
+  const baseUrl = page.getByLabel("Base URL", { exact: true });
+  const model = page.getByLabel("模型名称", { exact: true });
+  await provider.selectOption("local");
+  await expect(baseUrl).toHaveValue("http://127.0.0.1:8765/v1");
+  await expect(model).toHaveValue("Qwen2.5-1.5B-Instruct");
+  await expect(
+    page.getByRole("button", { name: "保存密钥", exact: true }),
+  ).toHaveCount(0);
+  const local = page.getByRole("region", { name: "本地模型服务", exact: true });
+  await expect(local).toContainText("不会自动启动服务或加载模型占用 GPU");
+  await expect(local.getByRole("status")).toContainText("尚未检查");
+  await local
+    .getByRole("button", { name: "检查本地模型状态", exact: true })
+    .click();
+  await expect(local.getByRole("status")).toContainText(
+    "浏览器预览不能检查本机模型服务",
+  );
+  await expect(local.getByRole("status")).not.toContainText("本地模型已就绪");
+  await baseUrl.fill("D:\\models\\qwen");
+  await expect(baseUrl).toHaveValue("http://127.0.0.1:8765/v1");
+  await expect(
+    page.getByText(/本地模型的 Base URL 应填写本机服务地址/),
+  ).toBeVisible();
+  await baseUrl.fill("http://localhost:9876/v1");
+  await model.fill("my-local-chat");
+  await provider.selectOption("ollama");
+  await expect(baseUrl).toHaveValue("http://127.0.0.1:11434/v1");
+  await expect(local).toHaveCount(0);
+  await provider.selectOption("local");
+  await expect(baseUrl).toHaveValue("http://localhost:9876/v1");
+  await expect(model).toHaveValue("my-local-chat");
+  await expect(local.getByRole("status")).toContainText("尚未检查");
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "设置", exact: true })
+    .click();
+  await expect(provider).toHaveValue("local");
+  await expect(baseUrl).toHaveValue("http://localhost:9876/v1");
+  await expect(model).toHaveValue("my-local-chat");
+  await expect(
+    page.getByRole("button", { name: "获取模型", exact: true }),
+  ).toBeEnabled();
+  await page.screenshot({
+    path: testInfo.outputPath("local-model-settings.png"),
+    fullPage: true,
+  });
+  await testInfo.attach("本地模型设置（静态浏览器流程，无本机请求）", {
+    path: testInfo.outputPath("local-model-settings.png"),
+    contentType: "image/png",
+  });
+});
+
 test("心情推荐与本机反馈：显式应用、不改好句、清除需确认", async ({
   page,
 }, testInfo) => {

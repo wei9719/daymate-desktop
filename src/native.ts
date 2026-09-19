@@ -130,6 +130,21 @@ export interface AiModelList {
   source: "live" | "cache";
 }
 
+export interface LocalAiStatus {
+  state: "loading" | "ready" | "busy" | "error";
+  model: string;
+  device: string | null;
+  message: string;
+}
+
+export async function checkLocalAiStatus(baseUrl: string) {
+  if (!isDesktop())
+    throw new Error(
+      "浏览器预览不能检查本机模型服务，请在 DayMate 桌面版中操作。",
+    );
+  return invoke<LocalAiStatus>("check_local_ai_status", { baseUrl });
+}
+
 export async function listAiModels(
   provider: string,
   baseUrl: string,

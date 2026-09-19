@@ -891,6 +891,13 @@ fn save_ai_key(
 
 #[tauri::command]
 fn get_ai_key_status(provider: String, base_url: String) -> Result<ai::AiKeyStatus, String> {
+    if !ai::provider_needs_key(&provider)? {
+        return Ok(ai::AiKeyStatus {
+            saved: false,
+            usable: true,
+            message: "此本机服务无需 API Key".into(),
+        });
+    }
     let entry = ai_key_entry(&provider)?;
     let bytes = match entry.get_secret() {
         Ok(bytes) => bytes,
@@ -921,6 +928,13 @@ fn delete_ai_key(state: State<'_, AppState>, provider: String) -> Result<(), Str
     };
     state.ai.clear_cache();
     Ok(())
+}
+
+#[tauri::command]
+async fn check_local_ai_status(base_url: String) -> Result<ai::LocalAiStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || ai::check_local_status(&base_url))
+        .await
+        .map_err(|_| "本地 AI 状态检查未完成，请稍后重试".to_string())?
 }
 
 #[tauri::command]
@@ -1153,6 +1167,7 @@ pub fn run() {
             save_ai_key,
             get_ai_key_status,
             delete_ai_key,
+            check_local_ai_status,
             test_ai_connection,
             recommend_music_with_ai,
             list_ai_models,

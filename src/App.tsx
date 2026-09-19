@@ -44,6 +44,7 @@ import {
   MusicFeedbackPanel,
 } from "./features/music/SmartMusicPlayer";
 import { LocalMusicImport } from "./features/music/LocalMusicImport";
+import { LocalAiStatus } from "./components/LocalAiStatus";
 import {
   getMusicPlayback,
   musicStateKey,
@@ -1906,6 +1907,11 @@ export function SettingsPage() {
   );
   useEffect(() => {
     const version = ++aiSettingsVersion.current;
+    if (!findAiProvider(preferences.aiProvider).needsKey) {
+      return () => {
+        aiSettingsVersion.current += 1;
+      };
+    }
     getAiKeyStatus(preferences.aiProvider, preferences.aiBaseUrl)
       .then((status) => {
         if (version === aiSettingsVersion.current) {
@@ -2356,6 +2362,15 @@ export function SettingsPage() {
               maxLength={2048}
               disabled={aiBusy}
               onChange={(event) => {
+                if (
+                  provider.id === "local" &&
+                  /^(?:[a-z]:|\\\\|\/|file:)/i.test(event.target.value.trim())
+                ) {
+                  setAiStatus(
+                    "本地模型的 Base URL 应填写本机服务地址，不是模型文件夹路径；例如 http://127.0.0.1:8765/v1。",
+                  );
+                  return;
+                }
                 const nextUrl = aiProfileText(
                   event.target.value,
                   preferences.aiBaseUrl,
@@ -2380,6 +2395,12 @@ export function SettingsPage() {
           <p className="ai-test-note">
             每个服务商分别记住接口地址和模型名称；切换回来无需重填，密钥始终独立保存在系统凭据中。
           </p>
+          {provider.id === "local" && (
+            <LocalAiStatus
+              key={`${provider.id}:${preferences.aiBaseUrl}:${preferences.aiModel}`}
+              baseUrl={preferences.aiBaseUrl}
+            />
+          )}
           {(provider.id === "siliconflow" || provider.id === "zhipu") && (
             <p className="ai-test-note">
               硅基流动上的 GLM
@@ -2447,7 +2468,10 @@ export function SettingsPage() {
             </button>
           </div>
           <p className="ai-test-note">
-            点击才获取模型目录，不发送聊天内容，计入本机请求次数。不自动选择模型；目录可见不代表免费或已开通权限，实际价格和访问权限以该平台为准。
+            点击才获取模型目录，不发送聊天内容，计入本机请求次数。不自动选择模型；
+            {provider.id === "local"
+              ? "本地服务返回它已配置的模型，DayMate 不会因此下载或启动模型。"
+              : "目录可见不代表免费或已开通权限，实际价格和访问权限以该平台为准。"}
           </p>
           <p className="ai-test-note">
             请选择文本聊天模型。图像生成模型不能用于音乐类别推荐或鼓励；
@@ -2550,7 +2574,9 @@ export function SettingsPage() {
           </div>
           <p className="ai-test-note">
             测试连接会向所选服务发送固定测试语句，并计入每日请求次数，不含活动或任务数据。
-            文本调用可能按服务商定价收费，本机次数上限不是账单限额。
+            {provider.id === "local"
+              ? "仅请求已启动的本机服务；生成文本会消耗本机计算资源，服务忙碌时请稍后再试。"
+              : "文本调用可能按服务商定价收费，本机次数上限不是账单限额。"}
           </p>
           {aiStatus && (
             <p className="ai-status" role="status">

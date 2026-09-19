@@ -64,6 +64,13 @@ export const aiProviders: AiProvider[] = [
     needsKey: true,
   },
   {
+    id: "local",
+    name: "本地模型（已有文件）",
+    baseUrl: "http://127.0.0.1:8765/v1",
+    model: "Qwen2.5-1.5B-Instruct",
+    needsKey: false,
+  },
+  {
     id: "ollama",
     name: "Ollama（本机）",
     baseUrl: "http://127.0.0.1:11434/v1",

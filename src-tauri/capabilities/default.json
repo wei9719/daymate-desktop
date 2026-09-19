@@ -19,6 +19,7 @@
     "allow-get-ai-key-status",
     "allow-delete-ai-key",
     "allow-test-ai-connection",
+    "allow-check-local-ai-status",
     "allow-recommend-music-with-ai",
     "allow-list-ai-models",
     "allow-generate-encouragement",

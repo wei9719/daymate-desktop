@@ -46,6 +46,12 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test
+      - name: Test local AI protocol without models or GPU
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s local_ai/tests -v
+      - name: Test local AI launcher helpers without starting processes
+        run: ./scripts/test-local-ai-launcher.ps1
       - name: Report versioned synthetic music evaluation (not user satisfaction)
         run: npm run eval:music
       - run: node --test scripts/test-release.mjs scripts/test-audit-rust.mjs scripts/test-check-sarif.mjs

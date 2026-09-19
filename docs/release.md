@@ -26,6 +26,9 @@ npm run format:check
 npm run lint
 npm run typecheck
 npm run test
+$env:PYTHONDONTWRITEBYTECODE = '1'
+python -m unittest discover -s local_ai/tests -v
+./scripts/test-local-ai-launcher.ps1
 npm run eval:music
 node --test scripts/test-release.mjs
 node --test scripts/test-audit-rust.mjs
@@ -59,15 +62,17 @@ git push origin v0.8.0
 
 ## 自动发布顺序
 
-`.github/workflows/release.yml` 复用 `ci.yml` 的完整质量检查，保证 PR、main 和 Tag 发布执行相同门禁：格式、Lint、类型检查、前端测试、发布脚本测试、前端构建、版本一致性、Rust fmt、Clippy 与 Rust 测试。Rust 依赖使用锁文件。
+`.github/workflows/release.yml` 复用 `ci.yml` 的完整质量检查，保证 PR、main 和 Tag 发布执行相同门禁：格式、Lint、类型检查、前端测试、Python 本地 AI 协议测试、发布脚本测试、前端构建、版本一致性、Rust fmt、Clippy 与 Rust 测试。Rust 依赖使用锁文件。
 
 质量检查分别在 Windows Server 2022/2025 执行，同时审计 npm 全依赖和完整 Cargo.lock。RustSec 报告中的全部漏洞阻断发布；unsound 警示按 Cargo 解析出的 Windows 实际依赖阻断，非 Windows 依赖与停维护警示不隐藏，详见[安全说明](security-compatibility.md)。审计命令失败、元数据缺失或存在忽略配置时门禁失败。每周另运行同一审计工作流。
 
-Release 另复用 CodeQL 工作流，构建同时依赖质量和安全检查。`scripts/check-sarif.mjs` 检查本次实际生成的报告：安全分值至少 7 或 error 级安全结果阻断，报告不完整、引用规则无效也失败。Tag 仍完整执行扫描和本地门禁，只不上传告警/查询数据库；main/PR 上传供 GitHub 告警管理。不要用扫描任务本身的绿色状态代替结果检查。
+Release 另复用 CodeQL 工作流，JavaScript/TypeScript 与本地服务 Python 分别扫描，构建同时依赖全部质量和安全检查。`scripts/check-sarif.mjs` 检查本次实际生成的报告：安全分值至少 7 或 error 级安全结果阻断，报告不完整、引用规则无效也失败。Tag 仍完整执行扫描和本地门禁，只不上传告警/查询数据库；main/PR 上传供 GitHub 告警管理。不要用扫描任务本身的绿色状态代替结果检查。
 
 0.7.0 起，CI 还复用 `ui-smoke.yml` 在 GitHub 托管 Ubuntu Chromium 验证设置与内容页。Release 将同一 UI 工作流作为独立构建前置条件，复用 CI 时跳过重复 UI job，但不跳过实际浏览器门禁。它使用虚构偏好与模拟曲库，没有 Key、真实 AI 或 Tauri IPC；测试设置恢复、浏览器原生能力提示、场景/鼓励回退及音乐与好句独立，保存截图和报告 14 天。本地只允许 `npm run test:ui -- --list` 发现测试，不下载浏览器或操作旧应用。
 
 0.8.0 增加心情意图、反馈清除、跨页曲终连播/本地导入与专注恢复流程。连播生命周期用受控 Audio 事件验证，不声称测试了真实声卡或供应商流媒体。单元测试仅发现 `src/**/*.test.{ts,tsx}`，不遍历 Rust 构建输出；版本化音乐合成评测在 CI 单独展示，同时属于完整单测套件。
+
+0.9.0 起，两组 Windows 质量任务还执行 `python -m unittest discover -s local_ai/tests -v`，并设置 `PYTHONDONTWRITEBYTECODE=1`。这些测试仅依赖 Python 标准库和假模型加载器，不安装 PyTorch/Transformers、不下载权重、不读取 API Key、不运行真实 GPU 推理。`scripts/test-local-ai-launcher.ps1` 单独验证启动脚本的纯状态/参数函数，不启动或停止实际进程。Release 复用同一 CI，因此同样受此门禁保护。协议测试通过不等于某台电脑的 CUDA、模型文件或中文生成已验证；真实推理、父子进程停止和显存释放是显式、独立的本机服务诊断，步骤和证据边界见[本地 AI 指南](local-ai.md)，不能以跳过协议测试替代。
 
 仓库通过 `.gitattributes` 与 `.prettierrc.json` 统一使用 LF 换行，即使 Windows Git 开启 `core.autocrlf=true`，新检出的源文件也保持 LF。已有工作目录更新规则后可运行 `npx prettier --write .` 统一格式，再执行格式检查；不要通过关闭门禁解决换行差异。
 

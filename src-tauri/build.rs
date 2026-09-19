@@ -10,6 +10,7 @@ fn main() {
             "get_ai_key_status",
             "delete_ai_key",
             "test_ai_connection",
+            "check_local_ai_status",
             "recommend_music_with_ai",
             "list_ai_models",
             "generate_encouragement",

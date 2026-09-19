@@ -1,6 +1,6 @@
 # DayMate 工程手册
 
-更新日期：**2026-09-12**。说明范围：**v0.8.0 开发与验收**。
+更新日期：**2026-09-20**。说明范围：**v0.9.0 开发与验收**。
 
 这份手册帮助使用者和贡献者快速回答三个问题：用了什么技术、功能怎样连起来、怎样证明它确实可用。安装和日常操作请看 [用户手册](../USER_GUIDE.md)；研究来源和不采用某些热门技术的理由见 [研究与决策](research-and-decisions-v0.8.0.md)。
 
@@ -8,7 +8,7 @@
 
 ## 1. 一分钟理解架构
 
-DayMate 是桌面应用，不是把用户数据上传到一个自建网站。界面用网页技术制作，Windows 能力由 Rust 在本机执行；用户选择启用 AI 后，才通过其配置的服务商提供增强功能。
+DayMate 是桌面应用，不是把用户数据上传到一个自建网站。界面用网页技术制作，Windows 能力由 Rust 在本机执行；用户选择启用 AI 后，才通过其配置的云端服务或独立本机模型服务提供增强功能。已有模型复用不等于直接接入原项目的 RAG、记忆或业务代码。
 
 ```mermaid
 flowchart TD
@@ -20,56 +20,66 @@ flowchart TD
     N <--> S[SQLite<br/>活动记录 AI调用次数 迁移版本]
     N <--> K[Windows 凭据管理器<br/>绑定服务商与地址的 API Key]
     N --> OS[前台应用 输入计数 托盘 自启 通知]
-    N -->|用户启用并确认发送| AI[用户选择的 AI 服务商]
+    N -->|云端配置 用户确认| AI[用户选择的 HTTPS AI 服务商]
+    N -->|本地配置 用户确认| PY[独立 Python 服务<br/>127.0.0.1:8765]
+    START[用户手动启动脚本] --> PY
+    PY --> QW[已有 Qwen safetensors<br/>只读离线加载]
     R --> M[音乐检索与播放控制器]
     M --> A[Audius 公共目录和播放入口]
     M --> L[随包离线音频或用户导入文件]
 ```
 
-如果阅读器不支持 Mermaid：**用户点界面 → 状态和规则处理 → 需要系统能力时通过 Tauri 调用 Rust → Rust 访问 Windows / SQLite / 凭据管理器**。音乐目录检索和音频播放在 WebView；远程 AI 请求在 Rust。两条网络通道不同，不要把“关闭 AI”理解成“音乐也不会联网”。
+如果阅读器不支持 Mermaid：**用户点界面 → 状态和规则处理 → 需要系统能力时通过 Tauri 调用 Rust → Rust 访问 Windows / SQLite / 凭据管理器**。云端和本地 AI 请求都经 Rust 校验；本地分支再请求用户手动启动的 Python 服务加载已有模型。音乐目录检索和音频播放在 WebView，与 AI 分开，不要把“关闭 AI”或“使用本地 AI”理解成“音乐也不会联网”。
 
-| 技术                         | 在这里负责什么                                              | 不负责什么                                                  |
-| ---------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
-| React + TypeScript           | 中文页面、表单、错误/空状态、播放操作；类型约束减少接口误用 | 不直接读取 Windows 键盘或数据库文件                         |
-| Vite + CSS + Recharts        | 开发构建、现有样式、应用时间排行和占比图                    | 当前不是 Tailwind 驱动；图表不证明工作产出                  |
-| Zustand                      | 页面共享任务、偏好、专注和音乐反馈状态；选择性持久化        | 不自动等于数据库，也不是多窗口强隔离或云同步                |
-| Tauri 2 IPC                  | 把有限的前端请求交给原生命令，并按窗口授权                  | 不能跳过 Rust 输入校验；浏览器预览没有这些系统能力          |
-| Rust                         | Windows 采集、托盘/自启/通知、AI 请求约束、数据库访问       | 不录制按键内容、截图或用户文档                              |
-| SQLite / rusqlite            | 活动会话、每日 AI 调用次数、事务迁移；WAL 与索引            | 当前不存任务、音乐反馈或专注历史表                          |
-| Windows 凭据管理器 / keyring | 保存 API Key，记录与服务商及最终接口地址的绑定              | 不是全磁盘加密，不能阻止已获当前 Windows 用户权限的软件攻击 |
+| 技术                            | 在这里负责什么                                               | 不负责什么                                                  |
+| ------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------- |
+| React + TypeScript              | 中文页面、表单、错误/空状态、播放操作；类型约束减少接口误用  | 不直接读取 Windows 键盘或数据库文件                         |
+| Vite + CSS + Recharts           | 开发构建、现有样式、应用时间排行和占比图                     | 当前不是 Tailwind 驱动；图表不证明工作产出                  |
+| Zustand                         | 页面共享任务、偏好、专注和音乐反馈状态；选择性持久化         | 不自动等于数据库，也不是多窗口强隔离或云同步                |
+| Tauri 2 IPC                     | 把有限的前端请求交给原生命令，并按窗口授权                   | 不能跳过 Rust 输入校验；浏览器预览没有这些系统能力          |
+| Rust                            | Windows 采集、托盘/自启/通知、AI 请求约束、数据库访问        | 不录制按键内容、截图或用户文档                              |
+| SQLite / rusqlite               | 活动会话、每日 AI 调用次数、事务迁移；WAL 与索引             | 当前不存任务、音乐反馈或专注历史表                          |
+| Windows 凭据管理器 / keyring    | 保存 API Key，记录与服务商及最终接口地址的绑定               | 不是全磁盘加密，不能阻止已获当前 Windows 用户权限的软件攻击 |
+| Python + PyTorch + Transformers | 可选独立服务，离线加载已有 Qwen2.5-1.5B-Instruct safetensors | 不自动安装依赖、下载/训练模型、读取原项目记忆或生成图片     |
 
 ## 2. 从功能找到代码
 
 下列路径以仓库根目录为起点。新增功能应在相邻模块补测试，不需要为了目录“看起来复杂”搬动全部代码。
 
-| 要看什么                   | 主要入口                                                                                                                                                                                                                            | 当前边界                                                    |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| 页面、导航、时间回顾、设置 | [`src/App.tsx`](../src/App.tsx)、[`src/App.css`](../src/App.css)                                                                                                                                                                    | 仍有较多页面组合集中于 App，持续按真实职责拆分              |
-| 任务和偏好                 | [`src/store.ts`](../src/store.ts)、[`src/services/persistedState.ts`](../src/services/persistedState.ts)                                                                                                                            | WebView 本地存储；逐字段恢复和损坏数据保护                  |
-| 专注会话                   | [`src/focusStore.ts`](../src/focusStore.ts)、[`src/services/focusSession.ts`](../src/services/focusSession.ts)、[`src/useFocusClock.ts`](../src/useFocusClock.ts)                                                                   | 当前会话恢复，不是完整专注历史或工时结算                    |
-| 音乐目录、缓存与资格过滤   | [`src/services/music.ts`](../src/services/music.ts)                                                                                                                                                                                 | 实际目录候选、受限标志过滤、失败回退                        |
-| 音乐排序与反馈             | [`src/services/musicRanking.ts`](../src/services/musicRanking.ts)、[`src/musicStore.ts`](../src/musicStore.ts)                                                                                                                      | 本地规则、有限元数据与显式反馈，不是训练后的推荐模型        |
-| 持久音乐控制器与界面       | [`src/features/music/playback.ts`](../src/features/music/playback.ts)、[`SmartMusicPlayer.tsx`](../src/features/music/SmartMusicPlayer.tsx)、[`LocalMusicImport.tsx`](../src/features/music/LocalMusicImport.tsx)                   | 单测与云端事件回归通过；不等于真实音频设备已验收            |
-| 场景、每日内容、主题       | [`src/services/companionContext.ts`](../src/services/companionContext.ts)、[`src/data/dailyContent.ts`](../src/data/dailyContent.ts)、[`src/services/dailyTheme.ts`](../src/services/dailyTheme.ts)                                 | 用户自选场景/心情；本地内容和日期规则，不自动生成背景图片   |
-| AI 设置与本地回退          | [`src/services/aiProviders.ts`](../src/services/aiProviders.ts)、[`aiPreferences.ts`](../src/services/aiPreferences.ts)、[`aiModels.ts`](../src/services/aiModels.ts)、[`aiRecommendation.ts`](../src/services/aiRecommendation.ts) | 服务商独立连接档案、模型目录、结构化类别和独立鼓励          |
-| 原生桥接与双窗口           | [`src/native.ts`](../src/native.ts)、[`src/services/system.ts`](../src/services/system.ts)、[`src/windows.ts`](../src/windows.ts)                                                                                                   | `main` 主窗口与 `companion` 浮球；显示/隐藏不等于启动新进程 |
-| Windows 和原生命令         | [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)、[`system.rs`](../src-tauri/src/system.rs)                                                                                                                                        | 采样、输入次数、图标、托盘、单实例、自启、通知              |
-| AI 安全与数据库            | [`src-tauri/src/ai.rs`](../src-tauri/src/ai.rs)、[`database.rs`](../src-tauri/src/database.rs)、[`capabilities`](../src-tauri/capabilities)                                                                                         | 请求/响应校验、调用预算、凭据绑定、主窗口/浮球权限分离      |
+| 要看什么                   | 主要入口                                                                                                                                                                                                                            | 当前边界                                                               |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 页面、导航、时间回顾、设置 | [`src/App.tsx`](../src/App.tsx)、[`src/App.css`](../src/App.css)                                                                                                                                                                    | 仍有较多页面组合集中于 App，持续按真实职责拆分                         |
+| 任务和偏好                 | [`src/store.ts`](../src/store.ts)、[`src/services/persistedState.ts`](../src/services/persistedState.ts)                                                                                                                            | WebView 本地存储；逐字段恢复和损坏数据保护                             |
+| 专注会话                   | [`src/focusStore.ts`](../src/focusStore.ts)、[`src/services/focusSession.ts`](../src/services/focusSession.ts)、[`src/useFocusClock.ts`](../src/useFocusClock.ts)                                                                   | 当前会话恢复，不是完整专注历史或工时结算                               |
+| 音乐目录、缓存与资格过滤   | [`src/services/music.ts`](../src/services/music.ts)                                                                                                                                                                                 | 实际目录候选、受限标志过滤、失败回退                                   |
+| 音乐排序与反馈             | [`src/services/musicRanking.ts`](../src/services/musicRanking.ts)、[`src/musicStore.ts`](../src/musicStore.ts)                                                                                                                      | 本地规则、有限元数据与显式反馈，不是训练后的推荐模型                   |
+| 持久音乐控制器与界面       | [`src/features/music/playback.ts`](../src/features/music/playback.ts)、[`SmartMusicPlayer.tsx`](../src/features/music/SmartMusicPlayer.tsx)、[`LocalMusicImport.tsx`](../src/features/music/LocalMusicImport.tsx)                   | 单一音源和页面订阅分离；需单测、云端回归与真机分别验收                 |
+| 场景、每日内容、主题       | [`src/services/companionContext.ts`](../src/services/companionContext.ts)、[`src/data/dailyContent.ts`](../src/data/dailyContent.ts)、[`src/services/dailyTheme.ts`](../src/services/dailyTheme.ts)                                 | 用户自选场景/心情；本地内容和日期规则，不自动生成背景图片              |
+| AI 设置与本地回退          | [`src/services/aiProviders.ts`](../src/services/aiProviders.ts)、[`aiPreferences.ts`](../src/services/aiPreferences.ts)、[`aiModels.ts`](../src/services/aiModels.ts)、[`aiRecommendation.ts`](../src/services/aiRecommendation.ts) | 服务商独立连接档案、模型目录、结构化类别和独立鼓励                     |
+| 原生桥接与双窗口           | [`src/native.ts`](../src/native.ts)、[`src/services/system.ts`](../src/services/system.ts)、[`src/windows.ts`](../src/windows.ts)                                                                                                   | `main` 主窗口与 `companion` 浮球；显示/隐藏不等于启动新进程            |
+| Windows 和原生命令         | [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)、[`system.rs`](../src-tauri/src/system.rs)                                                                                                                                        | 采样、输入次数、图标、托盘、单实例、自启、通知                         |
+| AI 安全与数据库            | [`src-tauri/src/ai.rs`](../src-tauri/src/ai.rs)、[`database.rs`](../src-tauri/src/database.rs)、[`capabilities`](../src-tauri/capabilities)                                                                                         | 请求/响应校验、调用预算、凭据绑定、主窗口/浮球权限分离                 |
+| 本地模型状态入口           | [`src/components/LocalAiStatus.tsx`](../src/components/LocalAiStatus.tsx)、[`src/native.ts`](../src/native.ts)                                                                                                                      | 显式健康检查、过期响应隔离；不启动模型、不自动轮询                     |
+| 本地推理服务与生命周期     | [`local_ai/server.py`](../local_ai/server.py)、[`runtime.py`](../local_ai/runtime.py)、[`scripts/local-ai.ps1`](../scripts/local-ai.ps1)                                                                                            | 回环文本协议、离线加载、单路推理、独立进程启停；不是桌面安装包内置环境 |
 
 ## 3. 数据究竟保存在哪里
 
-| 数据                                          | 实际保存方式                                         | 生命周期和隐私边界                                                               |
-| --------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------- |
-| 引导状态、任务、普通偏好、服务商地址/模型档案 | WebView localStorage，键 `daymate-state-v1`          | 留在本机；不是 SQLite；不含 API Key                                              |
-| 当前专注会话                                  | WebView localStorage，键 `daymate-focus-v1`          | 保存任务引用/标题、截止时刻或暂停剩余秒数、状态、通知标志；不上传 AI             |
-| 喜欢/不喜欢                                   | WebView localStorage，键 `daymate-music-feedback-v1` | 最多 200 条，保存曲目 ID、标题、音乐人、类别、评价和更新时间；用户可清除         |
-| 当前场景、心情、音乐意图、近期播放 ID         | 内存状态                                             | 不作为长期画像；近期列表最多 30 个 ID，退出后不恢复                              |
-| 音乐查询池 / AI 结果缓存                      | 进程/WebView 内存                                    | 有容量或时效限制，重启失效；不是云端个人资料                                     |
-| 活动会话、AI 每日次数                         | `daymate.sqlite3`                                    | 当前 schema v5；表为 `app_usage_sessions`、`ai_daily_usage`、`migration_history` |
-| API Key                                       | Windows 凭据管理器                                   | 不写普通配置、导出文件或日志；改变绑定目标后不能直接复用旧 Key                   |
-| 用户导入音频                                  | 用户文件及播放用临时 Blob                            | 不自动上传；浏览器 Blob 不代表音频已获得公共分发授权                             |
+| 数据                                          | 实际保存方式                                           | 生命周期和隐私边界                                                               |
+| --------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| 引导状态、任务、普通偏好、服务商地址/模型档案 | WebView localStorage，键 `daymate-state-v1`            | 留在本机；不是 SQLite；不含 API Key                                              |
+| 当前专注会话                                  | WebView localStorage，键 `daymate-focus-v1`            | 保存任务引用/标题、截止时刻或暂停剩余秒数、状态、通知标志；不上传 AI             |
+| 喜欢/不喜欢                                   | WebView localStorage，键 `daymate-music-feedback-v1`   | 最多 200 条，保存曲目 ID、标题、音乐人、类别、评价和更新时间；用户可清除         |
+| 当前场景、心情、音乐意图、近期播放 ID         | 内存状态                                               | 不作为长期画像；近期列表最多 30 个 ID，退出后不恢复                              |
+| 音乐查询池 / AI 结果缓存                      | 进程/WebView 内存                                      | 有容量或时效限制，重启失效；不是云端个人资料                                     |
+| 活动会话、AI 每日次数                         | `daymate.sqlite3`                                      | 当前 schema v5；表为 `app_usage_sessions`、`ai_daily_usage`、`migration_history` |
+| API Key                                       | Windows 凭据管理器                                     | 不写普通配置、导出文件或日志；改变绑定目标后不能直接复用旧 Key                   |
+| 用户导入音频                                  | 用户文件及播放用临时 Blob                              | 不自动上传；浏览器 Blob 不代表音频已获得公共分发授权                             |
+| 已有模型与 Python 环境                        | 用户显式指定的原目录                                   | 不下载、复制、训练或修改；不自动访问相邻项目的 RAG、聊天与业务数据               |
+| 本地模型服务状态、日志、临时文件与缓存        | 默认仓库父目录 `runtime/local-ai`，可指定 `RuntimeDir` | 独立于活动数据库；状态可能含个人路径，不能直接公开上传；提示词/回答不写日志      |
 
 原生数据库目录优先使用 `DAYMATE_DATA_DIR`，其次使用应用保存的数据目录启动参数，再回退到 Tauri 应用数据目录。界面“数据与隐私”显示的是活动数据位置，不能据此认为 WebView 存储和系统凭据也都在该目录。开发脚本将临时文件、缓存与活动数据指向项目父目录，安装用户仍应检查实际目录。
+
+本地服务的提示词与回答仅保留在推理所需内存中，不写模型目录、服务日志或活动 SQLite。桌面端仍有既有的短时 AI 结果内存缓存；“不落盘”不等于本机其他进程完全无法观察内存或接口。
 
 两个窗口同源共享 WebView 存储。`capabilities` 限制的是原生命令权限，不是对同源存储加密或隔离。浮球没有主窗口的 AI 和活动数据库命令授权，Key 也不放入共享存储。
 
@@ -129,22 +139,36 @@ flowchart LR
 
 ### 4.3 播放生命周期
 
-v0.8.0 控制器代码将页面订阅与播放生命周期分开：音频对象、曲终监听和下一首行为由独立控制器持有。页面卸载、主窗口隐藏不应暂停音频或撤销曲终监听；退出进程才结束播放。音频 Blob 在换曲/清空时释放，避免泄漏。
+从 v0.8.0 起，控制器代码将页面订阅与播放生命周期分开：音频对象、曲终监听和下一首行为由独立控制器持有。页面卸载、主窗口隐藏不应暂停音频或撤销曲终监听；退出进程才结束播放。音频 Blob 在换曲/清空时释放，避免泄漏。
 
 浏览器可能要求首次播放由用户点击触发。持续播放不等于允许开机未经用户操作就自动播放，也不等于退出后自动恢复音频。此部分必须结合控制器单测、界面回归和实际桌面验收，不能用模拟 Audio 测试证明音频设备一定正常。
 
 ## 5. AI 增强的完整边界
 
-1. 用户在设置中选服务商、地址和模型；Key 通过原生命令存入凭据管理器。切换服务商恢复其独立普通连接档案。
+1. 用户在设置中选服务商、地址和模型；需要 Key 的服务通过原生命令将凭据保存到系统，本地 `local` 分支无 Key。切换服务商恢复其独立普通连接档案。
 2. 前端显示将发送的有限字段；`music-intent-v2` 契约包含音乐偏好、场景、心情、`match`/`lift` 意图和小时，活动分钟/未完成数只有显式开启汇总共享才发送。音乐喜欢/不喜欢、近期 ID 和任务全文不发给 AI。
 3. `native.ts` 经 Tauri 调用 Rust。主窗口有相关能力；纯浏览器模式不伪造原生结果，会说明需要桌面版。
-4. Rust 验证服务商、地址、凭据绑定、模型和输入范围；限制在途请求、每日次数、超时与响应大小，缓存有失效控制。AI 测试与真实请求可能消耗服务商额度。
+4. Rust 验证服务商、地址、适用的凭据绑定、模型和输入范围；限制在途请求、每日次数、超时与响应大小，缓存有失效控制。云端测试与真实请求可能消耗服务商额度，本地推理占用本机资源。
 5. 音乐响应仅允许受控类别和理由，鼓励仅允许文本；拒绝多余字段、非法输出或空正文。AI 不获得打开程序、执行代码、改数据库或任意联网的工具权限。
 6. 超时、额度、鉴权、网络或格式失败回到明确的本地规则。失败不是“已经执行成功”，也不默认无限重试。
 
 普通 OpenAI 兼容协议不保证所有服务商的模型列表、推理开关或图片接口都一样。当前已实现的适配与操作说明见 [AI 配置指南](ai-setup.md)。图片生成、组织知识 RAG、向量检索、多 Agent 和微调不在当前链路中。
 
 当前 SQLite 的调用次数不是 token 计费账单。完整匿名性能指标、token 成本追踪、线上质量监测和人工校准体系尚未建立；不能宣称已有全套 LLMOps。
+
+### 5.1 本地模型的完整链路
+
+本地选项的准确名称是“本地模型（已有文件）”，标识为 `local`，不是把 Ollama 改个名字。默认 Base URL 为 `http://127.0.0.1:8765/v1`、模型为 `Qwen2.5-1.5B-Instruct`。URL 可编辑以匹配实际服务，但必须是允许的回环地址，不能填模型目录。
+
+1. 用户用 `scripts/local-ai.ps1 -Action start` 指定已有 Python 与完整模型目录。脚本隐藏启动独立进程；HTTP 可响应 `loading` 时启动命令即可返回，不等模型推理完成。
+2. `local_ai/runtime.py` 通过离线设置与 `local_files_only=True`、`use_safetensors=True`、`trust_remote_code=False` 加载文件，不下载缺失依赖或权重，不加载原项目的 RAG/LoRA/业务模块。
+3. 用户在设置中点击“检查本地模型状态” → `native.ts` → Rust `check_local_ai_status` → 同根 `GET /v1/health`。健康检查 3 秒超时、不计调用预算、不自动轮询或改变模型。浏览器预览不伪造原生结果。
+4. 就绪后，模型目录和连接测试沿用现有流程。真正生成由发送预览确认 → Rust 输入与预算校验 → `POST /v1/chat/completions` → 本地模型 → 结构化结果校验完成。本地推理请求最多等待 120 秒；健康就绪和目录有模型名都不是生成成功的证据。
+5. 合格结果成为独立鼓励或受限音乐类别建议。音乐类别仍进入原有真实目录检索和本地重排，不生成音频、图片或会员曲目。不合格结果回退规则，不擅自切换云端。
+
+服务只绑定 `127.0.0.1`（默认端口 8765），请求需 `X-DayMate-Local: 1`，验证 Host 并拒绝 Origin；只接受非流式文本和受限 JSON 参数。单次请求体最多 16 KiB、32 条消息和合计 6000 字符，输入最多 2048 Token、生成最多 512 个新 Token。单路推理忙时返回 429，加载中返回 503，不建立无界队列。该标准库 HTTP 服务只供本机使用，不是公网部署方案；无 Key 回环服务不能认证其他本机进程或用户。
+
+Python 环境、权重和推理依赖不在安装包中；模型加载可能消耗显著内存/显存，不保证 GPU、驱动和依赖组合兼容。选择服务商、启动 DayMate、关闭 AI 或退出应用均不代替服务启停。需要释放资源时用相同 `RuntimeDir` 执行 `-Action stop`；启动脚本验证进程归属后停止本次进程树，不按名称批量结束其他 Python 程序。配置、锁与失败处理详见[本地模型指南](local-ai.md)。
 
 ## 6. 时间统计和专注计时不是同一种时钟
 
@@ -175,6 +199,9 @@ node --test scripts/test-release.mjs scripts/test-audit-rust.mjs scripts/test-ch
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 cargo clippy --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
+$env:PYTHONDONTWRITEBYTECODE = '1'
+python -m unittest discover -s local_ai/tests -v
+./scripts/test-local-ai-launcher.ps1
 ```
 
 Windows 本地 C++/Rust 环境需要额外初始化时，可使用已有的 `npm run desktop:test` 和 `npm run desktop:clippy` 包装脚本。不要把 `desktop:dev` 或安装冒烟脚本当成只读检查，它们可能启动应用。
@@ -183,11 +210,14 @@ Windows 本地 C++/Rust 环境需要额外初始化时，可使用已有的 `npm
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | 前端规则与组件        | 相邻 `*.test.ts(x)`，`npm run test`                                                                                                  | 固定输入、状态、恢复、错误分支与界面交互                                                     | 真实模型质量、真实播放器输出、操作系统兼容性                 |
 | Rust 单测与本地假服务 | `src-tauri/src/*.rs` 内测试，`cargo test --locked ...`                                                                               | 参数/凭据绑定、迁移、计数、网络错误与响应验证                                                | 所有真实服务商当前可用或全量外设行为                         |
+| Python 协议与启动脚本 | [`local_ai/tests`](../local_ai/tests)、[`test-local-ai-launcher.ps1`](../scripts/test-local-ai-launcher.ps1)                         | 假加载器下的输入限制、健康/忙碌状态和安全协议，启动脚本纯函数                                | 真实权重加载、CUDA、生成质量、实际进程树停止或显存释放       |
 | 浏览器 UI 冒烟        | [`e2e/companion.e2e.ts`](../e2e/companion.e2e.ts)、[`ui-smoke.yml`](../.github/workflows/ui-smoke.yml)                               | 云端 Chromium 的模拟数据界面、断言、截图与控制台错误                                         | Tauri IPC、Key 存储、通知、自启、真实音乐网络                |
 | Windows 安装冒烟      | [`smoke-windows.ps1`](../scripts/smoke-windows.ps1)、[`release.yml`](../.github/workflows/release.yml)                               | 两个 Windows Server runner × 全新/旧 v4 模拟数据，共四组安装、启动、数据库、单实例与迁移检查 | Windows 10/11 完整 UI、重启/休眠、真实鼠标键盘和音频设备验收 |
 | 安全与供应链          | [`dependency-audit.yml`](../.github/workflows/dependency-audit.yml)、[`codeql.yml`](../.github/workflows/codeql.yml)、SARIF/审计脚本 | 当前依赖库报告和高危静态检测门禁                                                             | 绝对没有漏洞，或风险报告已全部消除                           |
 
 浏览器和安装冒烟在 GitHub runner 上执行，使用虚构数据/独立临时目录，不测试或替换维护者电脑上的旧应用。真实 AI live 测试默认跳过；不能为让 CI 变绿而填入个人 Key。
+
+Python 协议单测不需要模型、PyTorch 或 GPU；启动脚本测试不执行实际启停。CI 不下载权重，也不能用假加载器测试通过替代真实模型验收。真实推理需另行记录设备与依赖版本、有效文本生成及停止后的进程/资源释放结果；不公开个人路径、真实提示词或回答。本手册只说明验证入口，不预先宣布本版已通过。
 
 `npm run eval:music` 运行 `src/services/musicEvaluation.test.ts`，读取 `src/data/music-eval-v1.json` 中手工编写的 12 个合成场景和 12 首虚构曲目元数据，对照旧日期轮换基线，输出策略版本、心情标签命中比例和候选覆盖度。它不访问真实曲库、不发 AI 请求、不使用用户反馈。
 
@@ -199,21 +229,22 @@ Windows 本地 C++/Rust 环境需要额外初始化时，可使用已有的 `npm
 
 来源与样本限制见 [官方岗位研究](research-and-decisions-v0.8.0.md)。这张表是工程能力映射，不是宣称已经符合所有岗位或企业生产规模。
 
-| 样本中的能力方向                | 已有实现 / 本轮代码范围                                          | 验证入口                                              | 仍缺什么                                       |
-| ------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------- |
-| 业务问题到用户功能，何时不用 AI | 离线每日内容、规则选任务、AI 失败回退                            | `store.test.ts`、`aiRecommendation.test.ts`、组件回归 | 用户访谈、效果指标、长期使用研究               |
-| API 接入、治理和可靠性          | `native.ts` / `ai.rs` 的有限 IPC、配置校验、预算、缓存和失败处理 | Rust 假服务测试、AI 设置组件测试                      | 企业开放平台、分布式高可用、多租户治理         |
-| 可解释推荐 / 数据结构与算法     | `musicRanking.ts`、有界查询池和反馈                              | 相邻规则测试、版本化固定用例                          | 协同过滤、大目录索引、人工标注排序质量         |
-| 效果评测与质量闭环              | 单测、模拟 UI、安装与安全发布门禁                                | CI、Playwright 截图、SARIF 和四组安装任务             | 线上模型漂移监测、人工评分校准、统计显著性实验 |
-| 状态管理、稳定性、数据恢复      | Zustand 持久状态恢复、专注截止时刻、SQLite 迁移                  | 存储/计时/迁移测试                                    | 统一事务数据层、完整备份恢复、全面真机长稳测试 |
-| 安全与隐私                      | Key 与目标绑定、最小原生命令权限、不记录输入正文                 | 权限清单、Rust 校验测试、CodeQL、依赖审计             | 独立安全审计、渗透测试、企业合规认证           |
-| 版本控制与可交付软件            | SemVer、CHANGELOG、Tag 检查、安装包与校验和、门禁后发布          | `version:check`、发布脚本测试、Release 工作流         | 签名安装包/更新体系需独立密钥与发布方案        |
+| 样本中的能力方向                | 已有实现 / 本轮代码范围                                          | 验证入口                                              | 仍缺什么                                            |
+| ------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------- |
+| 业务问题到用户功能，何时不用 AI | 离线每日内容、规则选任务、AI 失败回退                            | `store.test.ts`、`aiRecommendation.test.ts`、组件回归 | 用户访谈、效果指标、长期使用研究                    |
+| API 接入、治理和可靠性          | `native.ts` / `ai.rs` 的有限 IPC、配置校验、预算、缓存和失败处理 | Rust 假服务测试、AI 设置组件测试                      | 企业开放平台、分布式高可用、多租户治理              |
+| 本地推理工程与资源边界          | 独立 Python 服务、已有 safetensors 离线加载、回环协议与受控启停  | Python 协议/脚本测试、另行显式真实推理验收            | 通用模型管理、多 GPU 调度、吞吐评测、服务化生产部署 |
+| 可解释推荐 / 数据结构与算法     | `musicRanking.ts`、有界查询池和反馈                              | 相邻规则测试、版本化固定用例                          | 协同过滤、大目录索引、人工标注排序质量              |
+| 效果评测与质量闭环              | 单测、模拟 UI、安装与安全发布门禁                                | CI、Playwright 截图、SARIF 和四组安装任务             | 线上模型漂移监测、人工评分校准、统计显著性实验      |
+| 状态管理、稳定性、数据恢复      | Zustand 持久状态恢复、专注截止时刻、SQLite 迁移                  | 存储/计时/迁移测试                                    | 统一事务数据层、完整备份恢复、全面真机长稳测试      |
+| 安全与隐私                      | Key 与目标绑定、最小原生命令权限、不记录输入正文                 | 权限清单、Rust 校验测试、CodeQL、依赖审计             | 独立安全审计、渗透测试、企业合规认证                |
+| 版本控制与可交付软件            | SemVer、CHANGELOG、Tag 检查、安装包与校验和、门禁后发布          | `version:check`、发布脚本测试、Release 工作流         | 签名安装包/更新体系需独立密钥与发布方案             |
 
 RAG、LangGraph、向量数据库、MCP 或多 Agent 在某些岗位出现，不意味着每个项目都必须采用。当前没有用户授权读取的知识库，音乐候选规模也有限；硬加这些组件只会扩大成本、故障和隐私边界。
 
 ## 9. 下一步的合理顺序
 
-1. 先完成当前版本的规则、跨页播放、日期与专注恢复回归，再看真实用户反馈。
+1. 先完成当前版本的规则、跨页播放、日期/专注恢复与本地模型协议回归，分别记录真实模型和资源释放验收，再看真实用户反馈。
 2. 如需更完整备份、跨窗口一致性或专注历史，再设计 WebView → SQLite 的一次性迁移。
 3. 有标注和规模证据后，再评估更复杂的推荐方法；保留现有启发式作为可比较基线。
 4. 如需新增 AI 平台或图片模型，分别核验接口、权限、费用、许可和错误行为，不复用未经核验的能力假设。

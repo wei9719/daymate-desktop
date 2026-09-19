@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { ContentPage, FocusModal, SettingsPage } from "./App";
@@ -34,6 +35,12 @@ vi.mock("./native", async (importOriginal) => ({
   getAiUsage: vi.fn(async () => ({ date: "2026-09-08", calls: 0 })),
   testAiConnection: vi.fn(async () => "连接成功"),
   listAiModels: vi.fn(async () => ({ models: ["test-chat"], source: "live" })),
+  checkLocalAiStatus: vi.fn(async () => ({
+    state: "ready",
+    model: "Qwen2.5-1.5B-Instruct",
+    device: "cpu",
+    message: "可以开始使用",
+  })),
   generateEncouragement: vi.fn(async () => ({
     text: "按自己的节奏开始就好。",
     source: "ai",
@@ -120,6 +127,12 @@ beforeEach(() => {
   vi.mocked(native.listAiModels).mockResolvedValue({
     models: ["test-chat"],
     source: "live",
+  });
+  vi.mocked(native.checkLocalAiStatus).mockResolvedValue({
+    state: "ready",
+    model: "Qwen2.5-1.5B-Instruct",
+    device: "cpu",
+    message: "可以开始使用",
   });
   vi.mocked(native.generateEncouragement).mockResolvedValue({
     text: "按自己的节奏开始就好。",
@@ -218,6 +231,164 @@ describe("AI 推荐确认", () => {
 });
 
 describe("AI 设置与系统设置", () => {
+  it("本地模型不读取或显示密钥，不自动检查，地址和模型分平台保留且拒绝模型文件夹", async () => {
+    useAppStore.getState().updatePreferences({ aiProvider: "local" });
+    const view = render(<SettingsPage />);
+    expect(
+      screen.queryByText("API Key", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(native.getAiKeyStatus).not.toHaveBeenCalled();
+    expect(native.checkLocalAiStatus).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+      "http://127.0.0.1:8765/v1",
+    );
+    expect(screen.getByRole("textbox", { name: "模型名称" })).toHaveValue(
+      "Qwen2.5-1.5B-Instruct",
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Base URL" }), {
+      target: { value: "D:\\models\\qwen" },
+    });
+    expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+      "http://127.0.0.1:8765/v1",
+    );
+    expect(
+      screen.getByText(/本地模型的 Base URL 应填写本机服务地址/),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Base URL" }), {
+      target: { value: "http://localhost:9876/v1" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "模型名称" }), {
+      target: { value: "my-local-chat" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "服务商" }), {
+      target: { value: "siliconflow" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "服务商" }), {
+      target: { value: "local" },
+    });
+    expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+      "http://localhost:9876/v1",
+    );
+    expect(screen.getByRole("textbox", { name: "模型名称" })).toHaveValue(
+      "my-local-chat",
+    );
+    view.unmount();
+    render(<SettingsPage />);
+    expect(screen.getByRole("textbox", { name: "模型名称" })).toHaveValue(
+      "my-local-chat",
+    );
+    expect(native.checkLocalAiStatus).not.toHaveBeenCalled();
+    await act(async () => undefined);
+  });
+  it.each([
+    ["loading", "模型正在加载", "请等待独立服务加载完成"],
+    ["busy", "本地模型忙碌中", "请等当前推理结束后再试"],
+    ["error", "本地服务未就绪", "请先手动启动独立本机服务"],
+    ["ready", "本地模型已就绪", "可以继续获取模型目录或测试连接"],
+  ] as const)(
+    "手动检查展示%s及后续操作，不自动选择模型或轮询",
+    async (state, label, next) => {
+      useAppStore.getState().updatePreferences({ aiProvider: "local" });
+      vi.mocked(native.checkLocalAiStatus).mockResolvedValue({
+        state,
+        model: "detected-chat",
+        device: "cpu",
+        message: "状态说明",
+      });
+      render(<SettingsPage />);
+      const panel = within(
+        screen.getByRole("region", { name: "本地模型服务" }),
+      );
+      fireEvent.click(panel.getByRole("button", { name: "检查本地模型状态" }));
+      await panel.findByText(label);
+      expect(panel.getByRole("status")).toHaveTextContent(next);
+      expect(panel.getByRole("status")).toHaveTextContent(
+        "检测到模型：detected-chat",
+      );
+      expect(screen.getByRole("textbox", { name: "模型名称" })).toHaveValue(
+        "Qwen2.5-1.5B-Instruct",
+      );
+      expect(native.checkLocalAiStatus).toHaveBeenCalledExactlyOnceWith(
+        "http://127.0.0.1:8765/v1",
+      );
+      expect(native.listAiModels).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["provider", "url", "model"])(
+    "检查期间更换%s会丢弃旧状态，且在途检查防重复",
+    async (change) => {
+      useAppStore.getState().updatePreferences({ aiProvider: "local" });
+      let finish!: (status: native.LocalAiStatus) => void;
+      vi.mocked(native.checkLocalAiStatus).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      render(<SettingsPage />);
+      const button = screen.getByRole("button", { name: "检查本地模型状态" });
+      fireEvent.click(button);
+      fireEvent.click(button);
+      expect(native.checkLocalAiStatus).toHaveBeenCalledTimes(1);
+      if (change === "provider")
+        fireEvent.change(screen.getByRole("combobox", { name: "服务商" }), {
+          target: { value: "siliconflow" },
+        });
+      else
+        fireEvent.change(
+          screen.getByRole("textbox", {
+            name: change === "url" ? "Base URL" : "模型名称",
+          }),
+          {
+            target: {
+              value:
+                change === "url"
+                  ? "http://localhost:9876/v1"
+                  : "other-local-chat",
+            },
+          },
+        );
+      await act(async () => {
+        finish({
+          state: "ready",
+          model: "old-chat",
+          device: "cpu",
+          message: "过期状态不显示",
+        });
+      });
+      expect(screen.queryByText(/过期状态不显示/)).not.toBeInTheDocument();
+      if (change !== "provider")
+        expect(
+          screen.getByRole("button", { name: "检查本地模型状态" }),
+        ).toBeEnabled();
+    },
+  );
+  it("本机检查失败有明确消息，原有目录和测试不需要云Key", async () => {
+    useAppStore.getState().updatePreferences({ aiProvider: "local" });
+    vi.mocked(native.checkLocalAiStatus).mockRejectedValueOnce(
+      new Error("浏览器预览不能检查本机模型服务，请在 DayMate 桌面版中操作。"),
+    );
+    render(<SettingsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "检查本地模型状态" }));
+    await screen.findByText(/浏览器预览不能检查本机模型服务/);
+    fireEvent.click(screen.getByRole("button", { name: "获取模型" }));
+    await screen.findByText(/已获取：1 个模型/);
+    expect(native.listAiModels).toHaveBeenCalledWith(
+      "local",
+      "http://127.0.0.1:8765/v1",
+      false,
+      20,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+    await screen.findByText("连接成功");
+    expect(native.testAiConnection).toHaveBeenCalledWith(
+      "local",
+      "http://127.0.0.1:8765/v1",
+      "Qwen2.5-1.5B-Instruct",
+      false,
+      20,
+    );
+  });
   it("预算与分享开关可保存，测试使用所设上限", async () => {
     render(<SettingsPage />);
     await screen.findByText("密钥已配置");

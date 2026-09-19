@@ -5,6 +5,43 @@ import { useAppStore } from "../store";
 
 const defaults = useAppStore.getState().preferences;
 describe("各平台 AI 配置与旧版本恢复", () => {
+  it("本地模型首次选择使用独立默认值，切换与重载保留自己的地址和模型", () => {
+    const local = restorePreferences({ aiProvider: "local" }, defaults);
+    expect(local.aiBaseUrl).toBe("http://127.0.0.1:8765/v1");
+    expect(local.aiModel).toBe("Qwen2.5-1.5B-Instruct");
+    const changed = restorePreferences(
+      { aiBaseUrl: "http://localhost:9876/v1", aiModel: "my-local-chat" },
+      local,
+    );
+    const cloud = restorePreferences({ aiProvider: "siliconflow" }, changed);
+    expect(cloud.aiBaseUrl).toBe("https://api.siliconflow.cn/v1");
+    const returned = restorePreferences({ aiProvider: "local" }, cloud);
+    expect(returned.aiBaseUrl).toBe("http://localhost:9876/v1");
+    const restored = restorePreferences(
+      JSON.parse(JSON.stringify(returned)),
+      defaults,
+    );
+    expect(restored.aiProfiles.local).toEqual({
+      baseUrl: "http://localhost:9876/v1",
+      model: "my-local-chat",
+    });
+  });
+  it("本地profile只恢复非密钥字段，坏字段使用默认模型", () => {
+    expect(
+      restoreAiProfiles({
+        local: {
+          baseUrl: "http://127.0.0.1:8765/v1",
+          model: null,
+          apiKey: "secret",
+          modelPath: "private-path",
+          extra: true,
+        },
+      }).local,
+    ).toEqual({
+      baseUrl: "http://127.0.0.1:8765/v1",
+      model: "Qwen2.5-1.5B-Instruct",
+    });
+  });
   it("首次迁移当前平台的旧地址与模型，不强制替换旧模型", () => {
     const restored = restorePreferences(
       {

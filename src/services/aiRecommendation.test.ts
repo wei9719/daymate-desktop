@@ -10,6 +10,43 @@ import {
 } from "./aiRecommendation";
 
 describe("AI 推荐数据边界与回退", () => {
+  it("本地模型请求无需Key，服务未启动时音乐与鼓励继续规则回退", async () => {
+    const preferences = {
+      ...useAppStore.getState().preferences,
+      aiProvider: "local",
+      aiBaseUrl: "http://127.0.0.1:8765/v1",
+      aiModel: "Qwen2.5-1.5B-Instruct",
+      aiShareActivitySummary: false,
+    };
+    const music = await prepareAiMusicRequest(
+      preferences,
+      async () => 0,
+      () => 0,
+    );
+    const encouragement = prepareEncouragementRequest(preferences, {
+      scene: "rest",
+      mood: "tired",
+      hour: 20,
+    });
+    expect(music.needsKey).toBe(false);
+    expect(encouragement.needsKey).toBe(false);
+    expect(music).not.toHaveProperty("apiKey");
+    expect(encouragement).not.toHaveProperty("apiKey");
+    expect(
+      (
+        await resolveAiMusicRecommendation(music, async () => {
+          throw new Error("本机服务未启动");
+        })
+      ).source,
+    ).toBe("local");
+    expect(
+      (
+        await resolveEncouragement(encouragement, async () => {
+          throw new Error("本机服务忙碌");
+        })
+      ).source,
+    ).toBe("local");
+  });
   it("默认不读取或发送活动和任务统计", async () => {
     const preferences = {
       ...useAppStore.getState().preferences,
