@@ -15,7 +15,7 @@ DayMate 的 `local_ai/` 是独立 Python 文本推理服务，使用已有的 Py
 
 ## 需要准备什么
 
-1. 已存在的 Python 可执行文件，所在环境已安装兼容的 `torch`、`transformers` 和 safetensors 支持。
+1. 已存在的 Python 可执行文件，所在环境已安装兼容的 `torch`、`transformers`、`accelerate` 和 `safetensors`。`accelerate` 用于显式设备映射；已测版本组合见验证记录。
 2. 已存在的完整 `Qwen2.5-1.5B-Instruct` 模型目录，包含配置、分词器和 safetensors 权重；仅有一个权重文件通常不足以加载。
 3. 足够的可用内存/显存。本指南不保证所有 GPU、驱动或 Python 组合都能运行，也不承诺固定生成速度。
 4. DayMate 源码中的 `local_ai/` 和 `scripts/local-ai.ps1`，从项目根目录执行以下命令。
